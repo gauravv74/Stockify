@@ -1,0 +1,27 @@
+# Stockly
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+data/
+*.db
+*.db-*
+.stockly_secret
+users.json
+users.json.bak
+pincode_geocache.json
+blinkit_availability.csv
+.playwright/
+.DS_Store
+*.log
+
+# Large chat/agent dumps — not application code
+Untitled-1.md
+Agent.json
+Agent-Chat.json
+final-json-chat.json
+final-json.js
+golbal-chat-agent.json
+contact_uuids.txt

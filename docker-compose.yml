@@ -1,0 +1,33 @@
+services:
+  stockly:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      STOCKLY_ENV: production
+      STOCKLY_DATA_DIR: /app/data
+      STOCKLY_TRUST_PROXY: "1"
+    volumes:
+      - stockly_data:/app/data
+      - ./cities.json:/app/cities.json:ro
+    expose:
+      - "5001"
+    # Uncomment to publish directly without nginx (LAN / testing):
+    # ports:
+    #   - "5001:5001"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - stockly
+    ports:
+      - "80:80"
+      # For TLS, mount certs and use nginx.ssl.conf instead
+      # - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  stockly_data:

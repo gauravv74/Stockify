@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#0f172a" />
+<title>Stockly — Live stock across platforms</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-2: #f8f9fb;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --text: #111827;
+    --text-2: #374151;
+    --muted: #6b7280;
+    --muted-2: #9ca3af;
+    --ink: #0f172a;
+    --accent: #0f766e;
+    --accent-hover: #0d9488;
+    --green: #059669;
+    --green-bg: #ecfdf5;
+    --orange: #d97706;
+    --orange-bg: #fffbeb;
+    --blue: #2563eb;
+    --blue-bg: #eff6ff;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --gray-bg: #f3f4f6;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 1px 3px rgba(15, 23, 42, .06);
+    --platform: #0f766e;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --header-h: 56px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { height: 100%; }
+  body {
+    margin: 0; min-height: 100%; color: var(--text); background: var(--bg);
+    font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 40; height: var(--header-h);
+    display: flex; align-items: center; gap: 12px; padding: 0 20px;
+    background: rgba(255,255,255,.92);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+    background: var(--ink); color: #fff;
+    display: grid; place-items: center;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, .18);
+  }
+  .brand-mark svg { width: 20px; height: 20px; display: block; }
+  .brand-text { min-width: 0; }
+  .brand-text h1 {
+    margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -.03em;
+    color: var(--ink);
+  }
+  .brand-text p {
+    margin: 0; font-size: 12px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .icon-btn {
+    height: 36px; padding: 0 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-2); font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .icon-btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-strong); }
+  .icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 20px 20px calc(28px + var(--safe-b)); }
+
+  .platform-bar { margin-bottom: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .platform-bar::-webkit-scrollbar { display: none; }
+  .platforms {
+    display: inline-flex; gap: 4px; padding: 4px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: var(--shadow); min-width: max-content;
+  }
+  .plat {
+    appearance: none; border: none; background: transparent; cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--muted);
+    padding: 8px 14px; border-radius: 7px;
+    display: inline-flex; align-items: center; gap: 8px;
+    white-space: nowrap; transition: background .15s, color .15s;
+  }
+  .plat:hover { color: var(--text); background: var(--surface-2); }
+  .plat .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--dot, #94a3b8);
+  }
+  .plat.active { background: var(--ink); color: #fff; }
+  .plat.active .dot { box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+  .plat.all-plat .dot {
+    background: conic-gradient(#f59e0b, #ea580c, #7c3aed, #65a30d, #f59e0b);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+    gap: 16px; align-items: start;
+  }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+  }
+  .panel-body { padding: 16px; }
+  .panel-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .panel-head h2 {
+    margin: 0; font-size: 13px; font-weight: 700;
+    letter-spacing: .02em; text-transform: uppercase; color: var(--muted);
+  }
+
+  .seg {
+    display: inline-flex; gap: 2px; padding: 3px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; width: 100%; margin-bottom: 12px;
+  }
+  .seg button {
+    flex: 1; appearance: none; border: none; background: transparent;
+    font: inherit; font-size: 12.5px; font-weight: 700; color: var(--muted);
+    padding: 7px 8px; border-radius: 6px; cursor: pointer;
+  }
+  .seg button.active { background: #fff; color: var(--ink); box-shadow: var(--shadow); }
+
+  .field { margin-bottom: 14px; }
+  .field:last-of-type { margin-bottom: 0; }
+  .field > label, .field-label {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+  .field .count {
+    font-variant-numeric: tabular-nums; font-weight: 600;
+    color: var(--muted-2); text-transform: none; letter-spacing: 0;
+  }
+  input[type="text"], input[type="search"], input[type="password"], textarea {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius-sm); padding: 10px 12px;
+    font: inherit; font-size: 14px;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  textarea {
+    min-height: 110px; resize: vertical;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 12.5px; line-height: 1.55;
+  }
+  input:focus, textarea:focus {
+    outline: none; background: #fff; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(15, 118, 110, .12);
+  }
+  .hint { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .loc-panel { display: none; }
+  .loc-panel.active { display: block; }
+
+  .city-tools { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .city-tools input[type="search"] { flex: 1; padding: 8px 10px; font-size: 13px; }
+  .link-btn {
+    appearance: none; border: none; background: transparent; cursor: pointer;
+    font: inherit; font-size: 12px; font-weight: 700; color: var(--accent);
+    padding: 0; white-space: nowrap;
+  }
+  .link-btn:hover { color: var(--accent-hover); text-decoration: underline; }
+  .city-list {
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: 240px; overflow: auto; padding: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .city-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface-2);
+    cursor: pointer; user-select: none; transition: border-color .15s, background .15s;
+  }
+  .city-item:hover { background: #fff; border-color: var(--border-strong); }
+  .city-item.selected {
+    background: #fff; border-color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
+  .city-item input { accent-color: var(--ink); width: 16px; height: 16px; flex-shrink: 0; }
+  .city-item .meta { min-width: 0; flex: 1; }
+  .city-item .name { font-weight: 700; color: var(--ink); font-size: 13.5px; }
+  .city-item .state { color: var(--muted); font-size: 12px; margin-top: 1px; }
+  .city-item .pins {
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    background: #fff; border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 8px; white-space: nowrap;
+  }
+  .summary-pill {
+    margin-top: 10px; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 12px; color: var(--muted); font-weight: 500;
+  }
+  .summary-pill strong { color: var(--ink); font-weight: 700; }
+
+  .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+  .btn {
+    appearance: none; border: none; cursor: pointer; font: inherit;
+    height: 42px; padding: 0 16px; border-radius: var(--radius-sm);
+    font-size: 14px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn-primary { background: var(--ink); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #1e293b; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid #fecaca; }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px; margin-bottom: 12px;
+  }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); min-width: 0;
+  }
+  .stat .n {
+    font-size: 22px; font-weight: 800; letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums; color: var(--ink); line-height: 1.1;
+  }
+  .stat .l {
+    margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .stat.ok .n { color: var(--green); }
+  .stat.warn .n { color: var(--orange); }
+  .stat.info .n { color: var(--blue); }
+  .stat.bad .n { color: var(--red); }
+
+  .progress { height: 4px; background: var(--border); border-radius: 99px; overflow: hidden; margin-bottom: 10px; }
+  .progress > div { height: 100%; width: 0; background: var(--platform); transition: width .2s ease; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; min-height: 28px; }
+  .status-text { font-size: 13px; color: var(--muted); font-weight: 500; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .status-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spin {
+    width: 12px; height: 12px; flex-shrink: 0;
+    border: 2px solid rgba(15, 118, 110, .25); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .results { overflow: hidden; }
+  .table-scroll { overflow: auto; max-height: min(70vh, 720px); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    position: sticky; top: 0; z-index: 1; background: var(--surface-2); color: var(--muted);
+    text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 12px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+  tbody tr:first-child td { border-top: none; }
+  tbody tr:hover { background: #fafbfc; }
+  tbody tr.row-instock { background: #f0fdf9; }
+  tbody tr.row-instock:hover { background: #e6faf4; }
+  .r-card.row-instock { border-color: #a7f3d0; background: #f0fdf9; }
+  .pin { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 600; font-size: 12.5px; color: var(--ink); }
+  .loc { color: var(--muted); font-size: 12px; max-width: 180px; }
+  .prod { font-weight: 600; color: var(--text); }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .price { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+  .empty-title { font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
+  .empty-sub { font-size: 13px; }
+  .plat-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 700; color: var(--text-2);
+    background: var(--gray-bg); border: 1px solid var(--border);
+    border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+  .plat-tag .d { width: 6px; height: 6px; border-radius: 50%; background: var(--dot, #94a3b8); }
+
+  .badge {
+    display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; white-space: nowrap; border: 1px solid transparent;
+  }
+  .b-available { background: var(--green-bg); color: var(--green); border-color: #a7f3d0; }
+  .b-out_of_stock { background: var(--orange-bg); color: var(--orange); border-color: #fde68a; }
+  .b-not_found { background: var(--blue-bg); color: var(--blue); border-color: #bfdbfe; }
+  .b-not_serviceable { background: var(--red-bg); color: var(--red); border-color: #fecaca; }
+  .b-geocode_failed, .b-error, .b-pending { background: var(--gray-bg); color: var(--muted); border-color: var(--border); }
+
+  .cards { display: none; }
+  .col-platform { display: none; }
+  body.show-platform .col-platform { display: table-cell; }
+  body.show-platform .r-plat { display: inline-flex; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .brand-text p { display: none; }
+    .page { padding: 14px 14px calc(24px + var(--safe-b)); }
+    .topbar { padding: 0 14px; }
+    .city-list { max-height: 200px; }
+  }
+  @media (max-width: 640px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .stat { padding: 10px 12px; }
+    .stat .n { font-size: 18px; }
+    .platforms { width: 100%; }
+    .plat { flex: 1; justify-content: center; padding: 8px 8px; font-size: 11.5px; }
+    .plat .label-full { display: none; }
+    .plat .label-short { display: inline; }
+    .table-scroll, table thead, .desk-only { display: none !important; }
+    .cards { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+    .r-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; background: var(--surface); }
+    .r-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .r-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .r-meta strong { color: var(--ink); font-weight: 700; }
+    .r-plat { display: none; margin-bottom: 8px; }
+    body.show-platform .r-plat { display: inline-flex; }
+    .icon-btn .btn-label { display: none; }
+    .sticky-actions {
+      position: sticky; bottom: 0; z-index: 30; margin: 0 -14px -14px;
+      padding: 12px 14px calc(12px + var(--safe-b));
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border-top: 1px solid var(--border);
+    }
+    .sticky-actions .actions { margin-top: 0; flex-direction: row; }
+    .sticky-actions .btn { flex: 1; }
+  }
+  @media (min-width: 641px) { .plat .label-short { display: none; } }
+
+  /* ── Auth / Admin ── */
+  body.locked #appShell { display: none; }
+  body.locked .topbar-actions .authed-only { display: none; }
+  #loginScreen {
+    display: none; min-height: calc(100vh - var(--header-h));
+    align-items: center; justify-content: center; padding: 24px 16px;
+  }
+  body.locked #loginScreen { display: flex; }
+  .login-card {
+    width: 100%; max-width: 400px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: var(--shadow-md); padding: 28px 24px;
+  }
+  .login-card h2 { margin: 0 0 4px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; color: var(--ink); }
+  .login-card .sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  .login-card .field { margin-bottom: 12px; }
+  .login-error {
+    display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+    background: var(--red-bg); color: var(--red); border: 1px solid #fecaca;
+    font-size: 13px; font-weight: 600;
+  }
+  .login-error.show { display: block; }
+  .user-chip {
+    height: 36px; padding: 0 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface-2);
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12.5px; font-weight: 600; color: var(--text-2);
+  }
+  .user-chip .role {
+    font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+    padding: 2px 6px; border-radius: 999px; background: var(--ink); color: #fff;
+  }
+  .user-chip .role.user { background: #64748b; }
+
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 80;
+    background: rgba(15, 23, 42, .45); align-items: flex-start; justify-content: center;
+    padding: 40px 16px; overflow: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    width: 100%; max-width: 720px; background: var(--surface);
+    border-radius: 16px; border: 1px solid var(--border);
+    box-shadow: 0 20px 50px rgba(15, 23, 42, .2); overflow: hidden;
+  }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px 18px; border-bottom: 1px solid var(--border);
+  }
+  .modal-head h3 { margin: 0; font-size: 16px; font-weight: 800; color: var(--ink); }
+  .modal-body { padding: 16px 18px 20px; }
+  .create-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;
+  }
+  @media (max-width: 640px) { .create-grid { grid-template-columns: 1fr; } }
+  .plat-toggles {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 14px;
+  }
+  .plat-toggle {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface-2); font-size: 13px; font-weight: 600;
+  }
+  .switch {
+    position: relative; width: 40px; height: 22px; flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; cursor: pointer; background: #cbd5e1;
+    border-radius: 999px; transition: .15s;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: .15s;
+  }
+  .switch input:checked + .slider { background: var(--ink); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+
+  .users-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .users-table th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); padding: 8px 6px; border-bottom: 1px solid var(--border);
+  }
+  .users-table td { padding: 12px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .users-table .uname { font-weight: 700; color: var(--ink); }
+  .users-table .mini-toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mini-tog {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-2); font-size: 11px; font-weight: 700; cursor: pointer;
+  }
+  .mini-tog.on { background: #ecfdf5; border-color: #a7f3d0; color: var(--green); }
+  .mini-tog.off { color: var(--muted); }
+  .plat.hidden { display: none !important; }
+  .admin-msg {
+    display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+    font-size: 13px; font-weight: 600;
+  }
+  .admin-msg.show { display: block; }
+  .admin-msg.ok { background: var(--green-bg); color: var(--green); border: 1px solid #a7f3d0; }
+  .admin-msg.err { background: var(--red-bg); color: var(--red); border: 1px solid #fecaca; }
+</style>
+</head>
+<body class="locked">
+<div id="loginScreen">
+  <form class="login-card" id="loginForm" autocomplete="on">
+    <h2>Sign in to Stockly</h2>
+    <p class="sub">Admins manage accounts &amp; platform access. Shared users only see platforms they’re allowed.</p>
+    <div class="login-error" id="loginError"></div>
+    <div class="field">
+      <label for="loginUser">Username</label>
+      <input type="text" id="loginUser" name="username" autocomplete="username" required placeholder="admin" />
+    </div>
+    <div class="field">
+      <label for="loginPass">Password</label>
+      <input type="password" id="loginPass" name="password" autocomplete="current-password" required placeholder="••••••••" />
+    </div>
+    <button class="btn btn-primary" type="submit" id="loginBtn" style="width:100%; margin-top:8px;">Sign in</button>
+    <div class="hint" style="margin-top:14px; text-align:center;">Default admin: <strong>admin</strong> / <strong>admin123</strong> — change immediately after first login.</div>
+  </form>
+</div>
+
+<div id="pwdModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pwdTitle">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-head">
+      <h3 id="pwdTitle">Change password</h3>
+      <button type="button" class="icon-btn" id="pwdClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-msg" id="pwdMsg"></div>
+      <p class="hint" id="pwdHint" style="margin:0 0 12px;">Use at least 8 characters.</p>
+      <div class="field">
+        <label for="pwdCurrent">Current password</label>
+        <input type="password" id="pwdCurrent" autocomplete="current-password" />
+      </div>
+      <div class="field">
+        <label for="pwdNew">New password</label>
+        <input type="password" id="pwdNew" autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <label for="pwdNew2">Confirm new password</label>
+        <input type="password" id="pwdNew2" autocomplete="new-password" />
+      </div>
+      <button type="button" class="btn btn-primary" id="pwdSave" style="width:100%;">Update password</button>
+    </div>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="13" width="4" height="8" rx="1.2" fill="#5eead4"/>
+        <rect x="10" y="8" width="4" height="13" rx="1.2" fill="#2dd4bf"/>
+        <rect x="17" y="3" width="4" height="18" rx="1.2" fill="#99f6e4"/>
+        <path d="M4.5 9.5l2 2 4.5-5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <h1>Stockly</h1>
+      <p>Live stock across Blinkit, Instamart, Zepto & BigBasket</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <div class="user-chip authed-only" id="userChip" style="display:none;">
+      <span id="userChipName">—</span>
+      <span class="role" id="userChipRole">user</span>
+    </div>
+    <button class="icon-btn authed-only" id="usersBtn" style="display:none;" title="Manage users">Users</button>
+    <button class="icon-btn authed-only" id="pwdBtn" style="display:none;" title="Change password">Password</button>
+    <button class="icon-btn authed-only" id="csvBtn" disabled title="Export CSV">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="btn-label">Export</span>
+    </button>
+    <button class="icon-btn authed-only" id="logoutBtn" style="display:none;" title="Sign out">Sign out</button>
+  </div>
+</header>
+
+<div id="adminModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="adminTitle">User accounts</h3>
+      <button type="button" class="icon-btn" id="adminClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-msg" id="adminMsg"></div>
+      <div class="panel" style="box-shadow:none; margin-bottom:16px;">
+        <div class="panel-head"><h2>Create account</h2></div>
+        <div class="panel-body">
+          <div class="create-grid">
+            <div class="field" style="margin:0;">
+              <label for="newUser">Username / ID</label>
+              <input type="text" id="newUser" placeholder="e.g. partner_pune" autocomplete="off" />
+            </div>
+            <div class="field" style="margin:0;">
+              <label for="newPass">Password</label>
+              <input type="text" id="newPass" placeholder="min 8 characters" autocomplete="off" />
+            </div>
+          </div>
+          <div class="field-label" style="margin-bottom:6px;">Platform access</div>
+          <div class="plat-toggles" id="newPlatToggles">
+            <label class="plat-toggle">Blinkit
+              <span class="switch"><input type="checkbox" data-plat="blinkit" checked /><span class="slider"></span></span>
+            </label>
+            <label class="plat-toggle">Instamart
+              <span class="switch"><input type="checkbox" data-plat="instamart" /><span class="slider"></span></span>
+            </label>
+            <label class="plat-toggle">Zepto
+              <span class="switch"><input type="checkbox" data-plat="zepto" /><span class="slider"></span></span>
+            </label>
+            <label class="plat-toggle">BigBasket
+              <span class="switch"><input type="checkbox" data-plat="bigbasket" /><span class="slider"></span></span>
+            </label>
+          </div>
+          <button type="button" class="btn btn-primary" id="createUserBtn" style="width:100%;">Create &amp; share credentials</button>
+        </div>
+      </div>
+
+      <div class="field-label" style="margin-bottom:8px;">Existing accounts</div>
+      <div style="overflow:auto;">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Platforms</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="usersTbody">
+            <tr><td colspan="4" class="empty" style="padding:24px;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="appShell">
+<main class="page">
+  <div class="platform-bar">
+    <div class="platforms" role="tablist" aria-label="Platform">
+      <button class="plat all-plat" data-platform="all" role="tab" aria-selected="false">
+        <span class="dot"></span>
+        <span class="label-full">All platforms</span><span class="label-short">All</span>
+      </button>
+      <button class="plat active" data-platform="blinkit" role="tab" aria-selected="true">
+        <span class="dot" style="--dot:#f59e0b"></span>
+        <span class="label-full">Blinkit</span><span class="label-short">Blinkit</span>
+      </button>
+      <button class="plat" data-platform="instamart" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#ea580c"></span>
+        <span class="label-full">Swiggy Instamart</span><span class="label-short">Instamart</span>
+      </button>
+      <button class="plat" data-platform="zepto" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#7c3aed"></span>
+        <span class="label-full">Zepto</span><span class="label-short">Zepto</span>
+      </button>
+      <button class="plat" data-platform="bigbasket" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#65a30d"></span>
+        <span class="label-full">BigBasket</span><span class="label-short">BB</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="panel">
+      <div class="panel-head"><h2>Query</h2></div>
+      <div class="panel-body">
+        <div class="field-label">Location</div>
+        <div class="seg" role="tablist" aria-label="Location mode">
+          <button type="button" class="active" data-loc="cities" id="locCities">Cities</button>
+          <button type="button" data-loc="pincodes" id="locPins">Pincodes</button>
+          <button type="button" data-loc="both" id="locBoth">Both</button>
+        </div>
+
+        <div class="loc-panel active" id="panelCities">
+          <div class="field">
+            <label>Cities <span class="count" id="cityCount">0 selected</span></label>
+            <div class="city-tools">
+              <input type="search" id="citySearch" placeholder="Search Pune, Mumbai, Delhi…" autocomplete="off" />
+              <button type="button" class="link-btn" id="clearCities">Clear</button>
+            </div>
+            <div class="city-list" id="cityList" role="group" aria-label="Cities"></div>
+            <div class="summary-pill" id="citySummary">Select a city to check all its pincodes.</div>
+          </div>
+        </div>
+
+        <div class="loc-panel" id="panelPins">
+          <div class="field">
+            <label for="pincodes">Pincodes <span class="count" id="pinCount">0</span></label>
+            <textarea id="pincodes" placeholder="411001&#10;400001&#10;110001" spellcheck="false"></textarea>
+            <div class="hint">One per line, comma-separated, or a JSON array. 6-digit codes are auto-detected.</div>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label for="products">Product</label>
+          <input type="text" id="products" value="iphone 17" placeholder="e.g. iphone 17, milk" />
+          <div class="hint">Comma-separate multiple products.</div>
+        </div>
+
+        <div class="sticky-actions">
+          <div class="actions">
+            <button class="btn btn-primary" id="runBtn">Check availability</button>
+            <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
+          </div>
+        </div>
+        <div class="hint desk-only" style="margin-top:12px;">
+          City mode expands every mapped pincode under the hood. Pincode mode lets you target specific codes.
+        </div>
+      </div>
+    </aside>
+
+    <section>
+      <div class="stats">
+        <div class="stat"><div class="n" id="s-total">0</div><div class="l">Checked</div></div>
+        <div class="stat ok"><div class="n" id="s-available">0</div><div class="l">In stock</div></div>
+        <div class="stat warn"><div class="n" id="s-oos">0</div><div class="l">Out of stock</div></div>
+        <div class="stat info"><div class="n" id="s-nf">0</div><div class="l">Not listed</div></div>
+        <div class="stat bad"><div class="n" id="s-ns">0</div><div class="l">Unserviceable</div></div>
+      </div>
+
+      <div class="progress"><div id="bar"></div></div>
+      <div class="toolbar">
+        <div class="status-text" id="statusText"><span>Ready — pick a platform and location.</span></div>
+      </div>
+
+      <div class="panel results">
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-platform" style="width:110px;">Platform</th>
+                <th style="width:88px;">Pincode</th>
+                <th>Location</th>
+                <th>Product</th>
+                <th style="width:120px;">Status</th>
+                <th style="width:84px;">Price</th>
+                <th style="width:100px;">ETA / Stock</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr>
+                <td colspan="7" class="empty">
+                  <div class="empty-title">No results yet</div>
+                  <div class="empty-sub">Select a city or enter pincodes, then run a check.</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="cards" id="cards">
+          <div class="empty">
+            <div class="empty-title">No results yet</div>
+            <div class="empty-sub">Select a city or enter pincodes, then run a check.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let controller = null;
+let rows = [];
+let platform = 'blinkit';
+let locMode = 'cities'; // cities | pincodes | both
+let citiesCatalog = [];
+let selectedCities = new Set();
+let currentUser = null;
+let allowedPlatforms = [];
+let citiesLoaded = false;
+
+const PLATFORMS = {
+  all:       { name: 'All platforms',    short: 'Stockly',                 logo: null, color: '#0f766e' },
+  blinkit:   { name: 'Blinkit',          short: 'Blinkit · Stockly',       logo: 'B',  color: '#f59e0b' },
+  instamart: { name: 'Swiggy Instamart', short: 'Instamart · Stockly',     logo: 'S',  color: '#ea580c' },
+  zepto:     { name: 'Zepto',            short: 'Zepto · Stockly',         logo: 'Z',  color: '#7c3aed' },
+  bigbasket: { name: 'BigBasket',        short: 'BigBasket · Stockly',     logo: 'bb', color: '#65a30d' },
+};
+const PLAT_DOT = {
+  blinkit: '#f59e0b', instamart: '#ea580c', zepto: '#7c3aed', bigbasket: '#65a30d',
+};
+const PLAT_LABEL = {
+  blinkit: 'Blinkit', instamart: 'Instamart', zepto: 'Zepto', bigbasket: 'BigBasket',
+};
+const ALL_PLAT_KEYS = ['blinkit', 'instamart', 'zepto', 'bigbasket'];
+
+function applyAuthUI() {
+  const authed = !!currentUser;
+  document.body.classList.toggle('locked', !authed);
+  document.querySelectorAll('.authed-only').forEach(el => {
+    if (el.id === 'usersBtn') {
+      el.style.display = (authed && currentUser.role === 'admin' && !currentUser.must_change_password) ? 'inline-flex' : 'none';
+    } else if (el.id === 'csvBtn') {
+      el.style.display = (authed && !currentUser.must_change_password) ? 'inline-flex' : 'none';
+    } else if (el.id === 'pwdBtn') {
+      el.style.display = authed ? 'inline-flex' : 'none';
+    } else {
+      el.style.display = authed ? 'inline-flex' : 'none';
+    }
+  });
+  if (authed) {
+    $('userChipName').textContent = currentUser.username;
+    const roleEl = $('userChipRole');
+    roleEl.textContent = currentUser.role;
+    roleEl.classList.toggle('user', currentUser.role !== 'admin');
+    // Hide main app until password is changed
+    $('appShell').style.display = currentUser.must_change_password ? 'none' : '';
+  } else {
+    $('appShell').style.display = '';
+  }
+  applyPlatformAccess();
+}
+
+function applyPlatformAccess() {
+  const allowed = new Set(allowedPlatforms);
+  document.querySelectorAll('.plat').forEach(btn => {
+    const p = btn.dataset.platform;
+    if (p === 'all') {
+      btn.classList.toggle('hidden', allowed.size < 2);
+    } else {
+      btn.classList.toggle('hidden', !allowed.has(p));
+    }
+  });
+  // pick a valid selected platform
+  if (platform === 'all' && allowed.size >= 2) {
+    selectPlatform('all');
+  } else if (allowed.has(platform)) {
+    selectPlatform(platform);
+  } else if (allowed.size) {
+    selectPlatform([...allowed][0]);
+  }
+}
+
+async function apiJson(url, opts = {}) {
+  const resp = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts,
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (_) { data = null; }
+  if (!resp.ok) {
+    const err = new Error((data && data.error) || `HTTP ${resp.status}`);
+    err.status = resp.status;
+    throw err;
+  }
+  return data;
+}
+
+async function bootstrapAuth() {
+  try {
+    const data = await apiJson('/api/me');
+    currentUser = data.user;
+    allowedPlatforms = data.platforms || [];
+    if (data.must_change_password) currentUser.must_change_password = true;
+    applyAuthUI();
+    if (currentUser) await onLoggedIn();
+  } catch (_) {
+    currentUser = null;
+    allowedPlatforms = [];
+    applyAuthUI();
+  }
+}
+
+async function onLoggedIn() {
+  if (currentUser && currentUser.must_change_password) {
+    openPwdModal(true);
+    return;
+  }
+  if (!citiesLoaded) {
+    await loadCities();
+    citiesLoaded = true;
+  }
+}
+
+function showPwdMsg(text, ok = true) {
+  const el = $('pwdMsg');
+  el.textContent = text;
+  el.className = 'admin-msg show ' + (ok ? 'ok' : 'err');
+}
+
+function openPwdModal(forced = false) {
+  $('pwdModal').classList.add('open');
+  $('pwdMsg').className = 'admin-msg';
+  $('pwdCurrent').value = '';
+  $('pwdNew').value = '';
+  $('pwdNew2').value = '';
+  $('pwdHint').textContent = forced
+    ? 'You must set a new password before using Stockly (min 8 characters).'
+    : 'Use at least 8 characters.';
+  $('pwdClose').style.display = forced ? 'none' : 'inline-flex';
+}
+function closePwdModal() {
+  if (currentUser && currentUser.must_change_password) return;
+  $('pwdModal').classList.remove('open');
+}
+$('pwdBtn').addEventListener('click', () => openPwdModal(false));
+$('pwdClose').addEventListener('click', closePwdModal);
+$('pwdModal').addEventListener('click', (e) => {
+  if (e.target === $('pwdModal')) closePwdModal();
+});
+$('pwdSave').addEventListener('click', async () => {
+  const current_password = $('pwdCurrent').value;
+  const new_password = $('pwdNew').value;
+  const confirm = $('pwdNew2').value;
+  if (new_password !== confirm) {
+    showPwdMsg('New passwords do not match.', false);
+    return;
+  }
+  try {
+    const data = await apiJson('/api/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password, new_password }),
+    });
+    currentUser = data.user;
+    allowedPlatforms = data.platforms || [];
+    $('pwdModal').classList.remove('open');
+    applyAuthUI();
+    await onLoggedIn();
+    setStatus('<span>Password updated.</span>');
+  } catch (err) {
+    showPwdMsg(err.message, false);
+  }
+});
+
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('loginError').classList.remove('show');
+  $('loginBtn').disabled = true;
+  try {
+    const data = await apiJson('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: $('loginUser').value.trim(),
+        password: $('loginPass').value,
+      }),
+    });
+    currentUser = data.user;
+    allowedPlatforms = data.platforms || [];
+    if (data.must_change_password) currentUser.must_change_password = true;
+    $('loginPass').value = '';
+    applyAuthUI();
+    await onLoggedIn();
+  } catch (err) {
+    $('loginError').textContent = err.message || 'Login failed';
+    $('loginError').classList.add('show');
+  } finally {
+    $('loginBtn').disabled = false;
+  }
+});
+
+$('logoutBtn').addEventListener('click', async () => {
+  try { await apiJson('/api/logout', { method: 'POST' }); } catch (_) {}
+  currentUser = null;
+  allowedPlatforms = [];
+  rows = [];
+  applyAuthUI();
+  setStatus('<span>Signed out.</span>');
+});
+
+function showAdminMsg(text, ok = true) {
+  const el = $('adminMsg');
+  el.textContent = text;
+  el.className = 'admin-msg show ' + (ok ? 'ok' : 'err');
+}
+
+function openAdmin() {
+  $('adminModal').classList.add('open');
+  loadAdminUsers();
+}
+function closeAdmin() {
+  $('adminModal').classList.remove('open');
+  $('adminMsg').className = 'admin-msg';
+}
+$('usersBtn').addEventListener('click', openAdmin);
+$('adminClose').addEventListener('click', closeAdmin);
+$('adminModal').addEventListener('click', (e) => {
+  if (e.target === $('adminModal')) closeAdmin();
+});
+
+function readNewPlatforms() {
+  const out = {};
+  ALL_PLAT_KEYS.forEach(p => { out[p] = false; });
+  $('newPlatToggles').querySelectorAll('input[data-plat]').forEach(cb => {
+    out[cb.dataset.plat] = cb.checked;
+  });
+  return out;
+}
+
+$('createUserBtn').addEventListener('click', async () => {
+  const username = $('newUser').value.trim();
+  const password = $('newPass').value;
+  const platforms = readNewPlatforms();
+  if (!Object.values(platforms).some(Boolean)) {
+    showAdminMsg('Enable at least one platform.', false);
+    return;
+  }
+  try {
+    await apiJson('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, platforms, role: 'user' }),
+    });
+    showAdminMsg(`Created “${username}”. Share ID + password privately.`);
+    $('newUser').value = '';
+    $('newPass').value = '';
+    await loadAdminUsers();
+  } catch (err) {
+    showAdminMsg(err.message, false);
+  }
+});
+
+async function loadAdminUsers() {
+  const tb = $('usersTbody');
+  tb.innerHTML = `<tr><td colspan="4" class="empty" style="padding:24px;">Loading…</td></tr>`;
+  try {
+    const data = await apiJson('/api/admin/users');
+    const users = data.users || [];
+    if (!users.length) {
+      tb.innerHTML = `<tr><td colspan="4" class="empty" style="padding:24px;">No users yet.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = users.map(u => {
+      const toggles = ALL_PLAT_KEYS.map(p => {
+        const on = !!(u.platforms && u.platforms[p]);
+        const locked = u.role === 'admin';
+        return `<button type="button" class="mini-tog ${on ? 'on' : 'off'}" data-uid="${escHtml(u.id)}" data-plat="${p}" ${locked ? 'disabled title="Admins always have full access"' : ''}>${escHtml(PLAT_LABEL[p])}</button>`;
+      }).join('');
+      const active = u.active !== false;
+      return `<tr>
+        <td><div class="uname">${escHtml(u.username)}</div><div class="sub">${escHtml(u.role)}</div></td>
+        <td><div class="mini-toggles">${toggles}</div></td>
+        <td>${active ? '<span class="badge b-available">Active</span>' : '<span class="badge b-error">Disabled</span>'}</td>
+        <td style="white-space:nowrap;">
+          ${u.role === 'admin' ? '' : `<button type="button" class="link-btn" data-act="toggle" data-uid="${escHtml(u.id)}" data-active="${active ? '0' : '1'}">${active ? 'Disable' : 'Enable'}</button>
+          <button type="button" class="link-btn" style="color:var(--red);margin-left:10px;" data-act="delete" data-uid="${escHtml(u.id)}">Delete</button>`}
+        </td>
+      </tr>`;
+    }).join('');
+
+    tb.querySelectorAll('.mini-tog:not([disabled])').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const uid = btn.dataset.uid;
+        const plat = btn.dataset.plat;
+        const user = users.find(x => x.id === uid);
+        if (!user) return;
+        const next = { ...(user.platforms || {}) };
+        next[plat] = !btn.classList.contains('on');
+        try {
+          await apiJson('/api/admin/users/' + uid, {
+            method: 'PATCH',
+            body: JSON.stringify({ platforms: next }),
+          });
+          await loadAdminUsers();
+        } catch (err) {
+          showAdminMsg(err.message, false);
+        }
+      });
+    });
+    tb.querySelectorAll('[data-act]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const uid = btn.dataset.uid;
+        try {
+          if (btn.dataset.act === 'delete') {
+            if (!confirm('Delete this account?')) return;
+            await apiJson('/api/admin/users/' + uid, { method: 'DELETE' });
+          } else {
+            await apiJson('/api/admin/users/' + uid, {
+              method: 'PATCH',
+              body: JSON.stringify({ active: btn.dataset.active === '1' }),
+            });
+          }
+          await loadAdminUsers();
+        } catch (err) {
+          showAdminMsg(err.message, false);
+        }
+      });
+    });
+  } catch (err) {
+    tb.innerHTML = `<tr><td colspan="4" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
+  }
+}
+
+function selectPlatform(p) {
+  if (p !== 'all' && allowedPlatforms.length && !allowedPlatforms.includes(p)) return;
+  if (p === 'all' && allowedPlatforms.length < 2) return;
+  platform = p;
+  document.querySelectorAll('.plat').forEach(t => {
+    const on = t.dataset.platform === p;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.documentElement.style.setProperty('--platform', (PLATFORMS[p] || PLATFORMS.blinkit).color);
+  document.body.classList.toggle('show-platform', p === 'all');
+}
+document.querySelectorAll('.plat').forEach(t =>
+  t.addEventListener('click', () => selectPlatform(t.dataset.platform)));
+
+function setLocMode(mode) {
+  locMode = mode;
+  document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('active', b.dataset.loc === mode));
+  const showCities = mode === 'cities' || mode === 'both';
+  const showPins = mode === 'pincodes' || mode === 'both';
+  $('panelCities').classList.toggle('active', showCities);
+  $('panelPins').classList.toggle('active', showPins);
+}
+document.querySelectorAll('.seg button').forEach(b =>
+  b.addEventListener('click', () => setLocMode(b.dataset.loc)));
+
+function selectedPinTotal() {
+  return citiesCatalog.filter(c => selectedCities.has(c.id)).reduce((s, c) => s + (c.count || 0), 0);
+}
+function rawPinCount() {
+  return ($('pincodes').value.match(/\d{6}/g) || []).length;
+}
+function updatePinCount() {
+  const n = rawPinCount();
+  $('pinCount').textContent = n ? `${n} detected` : '0';
+}
+$('pincodes').addEventListener('input', updatePinCount);
+
+function updateCitySummary() {
+  const n = selectedCities.size;
+  const pins = selectedPinTotal();
+  $('cityCount').textContent = n ? `${n} selected` : '0 selected';
+  if (!n) {
+    $('citySummary').innerHTML = 'Select a city to check all its pincodes.';
+  } else {
+    const names = citiesCatalog.filter(c => selectedCities.has(c.id)).map(c => c.name).join(', ');
+    $('citySummary').innerHTML = `<strong>${n}</strong> cit${n === 1 ? 'y' : 'ies'} · <strong>${pins}</strong> pincodes<br><span style="color:var(--muted-2)">${escHtml(names)}</span>`;
+  }
+}
+
+function renderCities(filter = '') {
+  const q = filter.trim().toLowerCase();
+  const list = $('cityList');
+  const items = citiesCatalog.filter(c =>
+    !q || c.name.toLowerCase().includes(q) || (c.state || '').toLowerCase().includes(q)
+  );
+  if (!items.length) {
+    list.innerHTML = `<div class="empty" style="padding:24px 12px;"><div class="empty-sub">No cities match “${escHtml(filter)}”.</div></div>`;
+    return;
+  }
+  list.innerHTML = items.map(c => {
+    const on = selectedCities.has(c.id);
+    return `
+      <label class="city-item${on ? ' selected' : ''}" data-id="${escHtml(c.id)}">
+        <input type="checkbox" ${on ? 'checked' : ''} data-city="${escHtml(c.id)}" />
+        <div class="meta">
+          <div class="name">${escHtml(c.name)}</div>
+          <div class="state">${escHtml(c.state || '')}</div>
+        </div>
+        <span class="pins">${c.count} pins</span>
+      </label>`;
+  }).join('');
+  list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.city;
+      if (cb.checked) selectedCities.add(id); else selectedCities.delete(id);
+      cb.closest('.city-item')?.classList.toggle('selected', cb.checked);
+      updateCitySummary();
+    });
+  });
+}
+
+async function loadCities() {
+  try {
+    const resp = await fetch('/api/cities', { credentials: 'same-origin' });
+    if (resp.status === 401) throw new Error('Unauthorized');
+    const data = await resp.json();
+    citiesCatalog = data.cities || [];
+    const preferred = ['pune', 'mumbai', 'delhi', 'nagpur'];
+    const first = preferred.map(id => citiesCatalog.find(c => c.id === id)).find(Boolean);
+    if (first && selectedCities.size === 0) selectedCities.add(first.id);
+    renderCities();
+    updateCitySummary();
+  } catch (e) {
+    $('cityList').innerHTML = `<div class="empty" style="padding:24px 12px;"><div class="empty-title">Couldn’t load cities</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+  }
+}
+$('citySearch').addEventListener('input', (e) => renderCities(e.target.value));
+$('clearCities').addEventListener('click', () => {
+  selectedCities.clear();
+  renderCities($('citySearch').value);
+  updateCitySummary();
+});
+
+const counts = { total: 0, available: 0, out_of_stock: 0, not_found: 0, not_serviceable: 0 };
+function resetCounts() { for (const k in counts) counts[k] = 0; updateStats(); }
+function updateStats() {
+  $('s-total').textContent = counts.total;
+  $('s-available').textContent = counts.available;
+  $('s-oos').textContent = counts.out_of_stock;
+  $('s-nf').textContent = counts.not_found;
+  $('s-ns').textContent = counts.not_serviceable;
+}
+function statusLabel(s) {
+  return ({
+    available: 'In stock', out_of_stock: 'Out of stock',
+    not_found: 'Not listed', not_serviceable: 'Unserviceable',
+    geocode_failed: 'Geocode failed'
+  })[s] || s;
+}
+function badgeClass(s) {
+  if (s && s.startsWith('error')) return 'b-error';
+  return 'b-' + (s || 'pending');
+}
+function cleanLoc(loc) {
+  if (!loc) return '';
+  return loc.replace(/, India$/i, '').replace(/\s*\(via India Post\)\s*$/i, '');
+}
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function emptyState(msg, sub) {
+  return `<div class="empty"><div class="empty-title">${escHtml(msg)}</div><div class="empty-sub">${escHtml(sub)}</div></div>`;
+}
+function platformTag(plat) {
+  const label = PLAT_LABEL[plat] || plat || '';
+  const dot = PLAT_DOT[plat] || '#94a3b8';
+  return `<span class="plat-tag" style="--dot:${dot}"><span class="d"></span>${escHtml(label)}</span>`;
+}
+
+const STATUS_RANK = {
+  available: 0,
+  out_of_stock: 1,
+  not_found: 2,
+  not_serviceable: 3,
+  geocode_failed: 4,
+};
+
+function statusRank(s) {
+  if (!s) return 90;
+  if (STATUS_RANK[s] !== undefined) return STATUS_RANK[s];
+  if (String(s).startsWith('error')) return 80;
+  return 70;
+}
+
+function sortRowsInStockFirst(list) {
+  return [...list].sort((a, b) => {
+    const ra = statusRank(a.status);
+    const rb = statusRank(b.status);
+    if (ra !== rb) return ra - rb;
+    // same status: group by pincode, then platform
+    const pin = String(a.pincode).localeCompare(String(b.pincode));
+    if (pin !== 0) return pin;
+    return String(a.platform || '').localeCompare(String(b.platform || ''));
+  });
+}
+
+function rowHtml(r) {
+  const price = r.price ? '₹' + Number(r.price).toLocaleString('en-IN') : '<span class="sub">—</span>';
+  const etaStock = (r.status === 'available' || r.status === 'out_of_stock')
+    ? `${escHtml(r.eta || '—')}<div class="sub">inv ${escHtml(r.inventory ?? '—')}</div>`
+    : '<span class="sub">—</span>';
+  const prod = r.name
+    ? `<span class="prod">${escHtml(r.name)}</span><div class="sub">${escHtml(r.variant || '')}</div>`
+    : `<span class="prod">${escHtml(r.product)}</span>`;
+  const loc = cleanLoc(r.location);
+  const badge = `<span class="badge ${badgeClass(r.status)}">${escHtml(statusLabel(r.status))}</span>`;
+  const pTag = platformTag(r.platform);
+  const tr = `
+    <td class="col-platform">${pTag}</td>
+    <td class="pin">${escHtml(r.pincode)}</td>
+    <td class="loc">${loc ? escHtml(loc) : '<span class="sub">—</span>'}</td>
+    <td>${prod}</td>
+    <td>${badge}</td>
+    <td class="price">${price}</td>
+    <td>${etaStock}</td>`;
+  const card = `
+    <div class="r-plat">${pTag}</div>
+    <div class="r-top">
+      <div>
+        <div class="pin">${escHtml(r.pincode)}</div>
+        <div class="sub" style="margin-top:2px;">${loc ? escHtml(loc) : '—'}</div>
+      </div>
+      ${badge}
+    </div>
+    <div>${prod}</div>
+    <div class="r-meta">
+      <div>Price <strong>${r.price ? '₹' + Number(r.price).toLocaleString('en-IN') : '—'}</strong></div>
+      <div>ETA <strong>${escHtml(r.eta || '—')}</strong></div>
+      <div>Stock <strong>${escHtml(r.inventory ?? '—')}</strong></div>
+    </div>`;
+  return { tr, card };
+}
+
+function appendRowDom(r) {
+  const { tr: trHtml, card: cardHtml } = rowHtml(r);
+  const tr = document.createElement('tr');
+  tr.innerHTML = trHtml;
+  if (r.status === 'available') tr.classList.add('row-instock');
+  $('tbody').appendChild(tr);
+
+  const card = document.createElement('div');
+  card.className = 'r-card' + (r.status === 'available' ? ' row-instock' : '');
+  card.innerHTML = cardHtml;
+  $('cards').appendChild(card);
+}
+
+function renderAllRows(sorted) {
+  $('tbody').innerHTML = '';
+  $('cards').innerHTML = '';
+  if (!sorted.length) {
+    $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
+    $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
+    return;
+  }
+  for (const r of sorted) appendRowDom(r);
+}
+
+function finalizeResultsOrder() {
+  if (!rows.length) return;
+  rows = sortRowsInStockFirst(rows);
+  renderAllRows(rows);
+  // scroll results panel to top so in-stock pins are visible
+  const scroll = document.querySelector('.table-scroll');
+  if (scroll) scroll.scrollTop = 0;
+  const cards = $('cards');
+  if (cards) cards.scrollTop = 0;
+}
+
+function addRow(r) {
+  if (rows.length === 0) { $('tbody').innerHTML = ''; $('cards').innerHTML = ''; }
+  rows.push(r);
+  appendRowDom(r);
+  counts.total++;
+  if (counts[r.status] !== undefined) counts[r.status]++;
+  updateStats();
+}
+
+function setRunning(on) {
+  $('runBtn').style.display = on ? 'none' : 'flex';
+  $('stopBtn').style.display = on ? 'flex' : 'none';
+  $('csvBtn').disabled = on || rows.length === 0;
+  document.querySelectorAll('.plat, .seg button').forEach(t => { t.disabled = on; });
+  document.querySelectorAll('#cityList input').forEach(i => { i.disabled = on; });
+  $('citySearch').disabled = on;
+  $('clearCities').disabled = on;
+  $('pincodes').disabled = on;
+}
+function setStatus(html) { $('statusText').innerHTML = html; }
+
+function buildPayload() {
+  const products = $('products').value.trim();
+  const payload = { products, platform };
+  if (locMode === 'cities' || locMode === 'both') {
+    payload.cities = Array.from(selectedCities);
+  }
+  if (locMode === 'pincodes' || locMode === 'both') {
+    payload.pincodes = $('pincodes').value.trim();
+  }
+  return payload;
+}
+
+function validateLocation() {
+  const useCities = locMode === 'cities' || locMode === 'both';
+  const usePins = locMode === 'pincodes' || locMode === 'both';
+  const hasCities = useCities && selectedCities.size > 0;
+  const hasPins = usePins && rawPinCount() > 0;
+  if (!hasCities && !hasPins) {
+    if (locMode === 'pincodes') setStatus('<span>Enter at least one pincode to continue.</span>');
+    else if (locMode === 'cities') setStatus('<span>Select at least one city to continue.</span>');
+    else setStatus('<span>Select a city and/or enter pincodes.</span>');
+    return false;
+  }
+  return true;
+}
+
+async function run() {
+  if (!validateLocation()) return;
+  const payload = buildPayload();
+
+  rows = [];
+  resetCounts();
+  document.body.classList.toggle('show-platform', platform === 'all');
+  $('tbody').innerHTML = `<tr><td colspan="7" class="empty"><div class="empty-title">Starting…</div><div class="empty-sub">Streaming results as they arrive.</div></td></tr>`;
+  $('cards').innerHTML = emptyState('Starting…', 'Streaming results as they arrive.');
+  $('bar').style.width = '0%';
+  setRunning(true);
+
+  controller = new AbortController();
+  let total = 0, done = 0;
+
+  try {
+    const resp = await fetch('/api/check', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    if (resp.status === 401) {
+      currentUser = null;
+      applyAuthUI();
+      throw new Error('Session expired — please sign in again.');
+    }
+    if (resp.status === 403) {
+      const errBody = await resp.json().catch(() => ({}));
+      throw new Error(errBody.error || 'No platform access for this account.');
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const msg = JSON.parse(line);
+        if (msg.type === 'error') {
+          setStatus(`<span>Error: ${escHtml(msg.message)}</span>`);
+        } else if (msg.type === 'meta') {
+          total = msg.total;
+          const cityLabel = (msg.cities || []).map(c => c.name).join(', ');
+          const platLabel = msg.platform === 'all'
+            ? `all ${ (msg.platforms || []).length } platforms`
+            : (PLATFORMS[msg.platform]?.name || msg.platform);
+          const where = cityLabel
+            ? `${cityLabel} · ${msg.pincodes} pins`
+            : `${msg.pincodes} pins`;
+          const warm = (msg.platform === 'all' || msg.platform === 'instamart' || msg.platform === 'zepto')
+            ? ' · browser-backed platforms may take longer on first run'
+            : '';
+          setStatus(`<span class="spin"></span><span>${platLabel} · ${where} · ${total} checks${warm}</span>`);
+        } else if (msg.type === 'result') {
+          addRow(msg);
+          done++;
+          $('bar').style.width = total ? (100 * done / total) + '%' : '0%';
+          setStatus(`<span class="spin"></span><span>${done} / ${total} checked</span>`);
+        } else if (msg.type === 'done') {
+          finalizeResultsOrder();
+          const inStock = counts.available;
+          const inStockPins = new Set(rows.filter(r => r.status === 'available').map(r => r.pincode)).size;
+          setStatus(`<span>Done — ${done} checked · <strong style="color:var(--green)">${inStock} in stock</strong>${inStockPins ? ` across ${inStockPins} pincode${inStockPins === 1 ? '' : 's'}` : ''} (shown first).</span>`);
+          $('bar').style.width = '100%';
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      finalizeResultsOrder();
+      setStatus(`<span>Stopped at ${done} / ${total}. In-stock results moved to top.</span>`);
+    }
+    else { console.error(e); setStatus(`<span>Error: ${escHtml(e.message)}</span>`); }
+  } finally {
+    setRunning(false);
+    $('csvBtn').disabled = rows.length === 0;
+    if (rows.length === 0) {
+      $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
+      $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
+    }
+  }
+}
+
+function exportCSV() {
+  const cols = ['platform','pincode','location','product','status','available','name','variant','brand','price','mrp','inventory','eta','merchant_id','lat','lon'];
+  const esc = (v) => {
+    v = v == null ? '' : String(v);
+    return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  };
+  const lines = [cols.join(',')];
+  for (const r of sortRowsInStockFirst(rows)) lines.push(cols.map(c => esc(r[c])).join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `stockly_${platform}_availability.csv`;
+  a.click();
+}
+
+$('runBtn').addEventListener('click', run);
+$('stopBtn').addEventListener('click', () => controller && controller.abort());
+$('csvBtn').addEventListener('click', exportCSV);
+setLocMode('cities');
+updatePinCount();
+bootstrapAuth();
+</script>
+</body>
+</html>
