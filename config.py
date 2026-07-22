@@ -39,3 +39,49 @@ TRUST_PROXY = os.environ.get("STOCKLY_TRUST_PROXY", "1" if IS_PROD else "0").low
 DEFAULT_ADMIN_USER = os.environ.get("STOCKLY_ADMIN_USER", "admin")
 DEFAULT_ADMIN_PASS = os.environ.get("STOCKLY_ADMIN_PASS", "admin123")
 CITIES_FILE = HERE / "cities.json"
+
+# ---------------------------------------------------------------------------
+# Outbound proxy (residential/mobile) for scrapers.
+#
+# Grocery platforms (Swiggy Instamart, Zepto) block requests from datacenter
+# IPs (AWS/GCP/etc.), so from a cloud host their search returns 403 / login
+# walls. Route scraper traffic through a residential/mobile proxy to look like
+# a normal consumer connection. Leave unset to make direct connections.
+#
+#   STOCKLY_PROXY_SERVER   e.g. http://gate.provider.com:7000  (or socks5://...)
+#   STOCKLY_PROXY_USERNAME
+#   STOCKLY_PROXY_PASSWORD
+# ---------------------------------------------------------------------------
+PROXY_SERVER = os.environ.get("STOCKLY_PROXY_SERVER", "").strip()
+PROXY_USERNAME = os.environ.get("STOCKLY_PROXY_USERNAME", "").strip()
+PROXY_PASSWORD = os.environ.get("STOCKLY_PROXY_PASSWORD", "").strip()
+
+
+def playwright_proxy():
+    """Proxy dict for Playwright's browser/context, or None if unconfigured."""
+    if not PROXY_SERVER:
+        return None
+    proxy = {"server": PROXY_SERVER}
+    if PROXY_USERNAME:
+        proxy["username"] = PROXY_USERNAME
+    if PROXY_PASSWORD:
+        proxy["password"] = PROXY_PASSWORD
+    return proxy
+
+
+def curl_proxies():
+    """Proxy mapping for curl_cffi (`proxies=`), or None if unconfigured.
+
+    Embeds credentials into the URL: scheme://user:pass@host:port.
+    """
+    if not PROXY_SERVER:
+        return None
+    url = PROXY_SERVER
+    if PROXY_USERNAME and "@" not in PROXY_SERVER.split("://", 1)[-1]:
+        scheme, _, rest = PROXY_SERVER.partition("://")
+        if rest:
+            creds = PROXY_USERNAME
+            if PROXY_PASSWORD:
+                creds += f":{PROXY_PASSWORD}"
+            url = f"{scheme}://{creds}@{rest}"
+    return {"http": url, "https": url}

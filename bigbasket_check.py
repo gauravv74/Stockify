@@ -29,6 +29,7 @@ from urllib.parse import quote
 from curl_cffi import requests
 
 import blinkit_check as bk
+import config
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
@@ -57,6 +58,9 @@ class BigBasket:
     @staticmethod
     def _seed():
         s = requests.Session()
+        proxies = config.curl_proxies()
+        if proxies:
+            s.proxies = proxies
         s.get(BASE + "/", headers={"user-agent": UA},
               impersonate=IMPERSONATE, timeout=30)
         return s

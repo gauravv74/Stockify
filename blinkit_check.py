@@ -23,6 +23,8 @@ import uuid
 
 from curl_cffi import requests
 
+import config
+
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
@@ -165,6 +167,7 @@ def blinkit_search(session, query, lat, lon):
                 SEARCH_URL, params={"q": query},
                 headers=blinkit_headers(lat, lon),
                 impersonate=IMPERSONATE, timeout=30,
+                proxies=config.curl_proxies(),
             )
         except Exception as e:
             print(f"    ! request error ({attempt}/{MAX_RETRIES}): {e}", file=sys.stderr)

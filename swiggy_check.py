@@ -20,6 +20,7 @@ import threading
 from playwright.async_api import async_playwright
 
 import blinkit_check as bk
+import config
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
@@ -103,8 +104,12 @@ class SwiggyInstamart:
                 "--disable-gpu",
             ],
         )
-        self._ctx = await self._browser.new_context(
+        ctx_kwargs = dict(
             user_agent=UA, locale="en-US", viewport={"width": 1280, "height": 800})
+        proxy = config.playwright_proxy()
+        if proxy:
+            ctx_kwargs["proxy"] = proxy
+        self._ctx = await self._browser.new_context(**ctx_kwargs)
         self._page = await self._ctx.new_page()
         await self._prime()
 
