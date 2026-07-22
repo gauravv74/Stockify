@@ -13,6 +13,8 @@ services:
       - ./cities.json:/app/cities.json:ro
     expose:
       - "5001"
+    # Chromium (Playwright) needs more than Docker's default 64MB /dev/shm
+    shm_size: "1gb"
     # Uncomment to publish directly without nginx (LAN / testing):
     # ports:
     #   - "5001:5001"

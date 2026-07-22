@@ -6,6 +6,15 @@ REPO_URL="${REPO_URL:-https://github.com/gauravv74/Stockify.git}"
 APP_DIR="${APP_DIR:-$HOME/Stockify}"
 STOCKLY_DOMAIN="${STOCKLY_DOMAIN:-}"
 
+echo "==> Ensuring swap (prevents OOM wedge when Chromium runs)..."
+if ! sudo swapon --show | grep -q '/swapfile'; then
+  sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+fi
+
 echo "==> Installing Docker..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq docker.io docker-compose-v2 git curl

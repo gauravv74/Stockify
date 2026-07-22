@@ -95,7 +95,14 @@ class Zepto:
             return
         self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.launch(
-            headless=True, args=["--disable-blink-features=AutomationControlled"])
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ],
+        )
         self._ctx = await self._browser.new_context(
             user_agent=UA, locale="en-US", viewport={"width": 1280, "height": 900})
         self._page = await self._ctx.new_page()
