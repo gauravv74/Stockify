@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/gauravv74/Stockify.git}"
 APP_DIR="${APP_DIR:-$HOME/Stockify}"
+STOCKLY_DOMAIN="${STOCKLY_DOMAIN:-}"
 
 echo "==> Installing Docker..."
 sudo apt-get update -qq
@@ -23,6 +24,10 @@ echo "==> Configuring environment..."
 if [ ! -f .env ]; then
   SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
   ADMIN_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")
+  COOKIE_SECURE=0
+  if [ -n "$STOCKLY_DOMAIN" ]; then
+    COOKIE_SECURE=1
+  fi
   cat > .env <<EOF
 STOCKLY_ENV=production
 STOCKLY_HOST=0.0.0.0
@@ -31,7 +36,7 @@ STOCKLY_WORKERS=2
 STOCKLY_THREADS=4
 STOCKLY_TIMEOUT=300
 STOCKLY_SECRET_KEY=${SECRET}
-STOCKLY_COOKIE_SECURE=0
+STOCKLY_COOKIE_SECURE=${COOKIE_SECURE}
 STOCKLY_COOKIE_SAMESITE=Lax
 STOCKLY_TRUST_PROXY=1
 STOCKLY_SESSION_DAYS=14
@@ -47,14 +52,31 @@ EOF
   echo ""
 fi
 
+if [ -n "$STOCKLY_DOMAIN" ]; then
+  grep -q '^STOCKLY_DOMAIN=' .env 2>/dev/null || echo "STOCKLY_DOMAIN=${STOCKLY_DOMAIN}" >> .env
+  if grep -q '^STOCKLY_COOKIE_SECURE=' .env; then
+    sed -i "s/^STOCKLY_COOKIE_SECURE=.*/STOCKLY_COOKIE_SECURE=1/" .env
+  else
+    echo "STOCKLY_COOKIE_SECURE=1" >> .env
+  fi
+  export STOCKLY_DOMAIN
+  COMPOSE_FILES=(-f docker-compose.caddy.yml)
+else
+  COMPOSE_FILES=(-f docker-compose.yml)
+fi
+
 echo "==> Building and starting containers..."
-sudo docker compose up -d --build
+sudo -E docker compose "${COMPOSE_FILES[@]}" up -d --build
 
 echo "==> Waiting for health check..."
-for i in $(seq 1 30); do
-  if curl -sf http://127.0.0.1/api/health >/dev/null 2>&1; then
+HEALTH_URL="http://127.0.0.1/api/health"
+if [ -n "$STOCKLY_DOMAIN" ]; then
+  HEALTH_URL="https://${STOCKLY_DOMAIN}/api/health"
+fi
+for i in $(seq 1 40); do
+  if curl -skf "$HEALTH_URL" >/dev/null 2>&1 || curl -sf http://127.0.0.1/api/health >/dev/null 2>&1; then
     echo "Stockly is up."
-    curl -s http://127.0.0.1/api/health
+    curl -sk "$HEALTH_URL" 2>/dev/null || curl -s http://127.0.0.1/api/health
     exit 0
   fi
   sleep 5
