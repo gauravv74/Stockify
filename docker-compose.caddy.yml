@@ -15,6 +15,10 @@ services:
       - "5001"
     # Chromium (Playwright) needs more than Docker's default 64MB /dev/shm
     shm_size: "1gb"
+    # Lets the container reach a home-proxy tunnel bound on the host
+    # (STOCKLY_PROXY_SERVER=socks5://host.docker.internal:1080)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   caddy:
     image: caddy:2-alpine
