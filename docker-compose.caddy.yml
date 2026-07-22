@@ -1,0 +1,35 @@
+services:
+  stockly:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      STOCKLY_ENV: production
+      STOCKLY_DATA_DIR: /app/data
+      STOCKLY_TRUST_PROXY: "1"
+    volumes:
+      - stockly_data:/app/data
+      - ./cities.json:/app/cities.json:ro
+    expose:
+      - "5001"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - stockly
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      STOCKLY_DOMAIN: ${STOCKLY_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  stockly_data:
+  caddy_data:
+  caddy_config:

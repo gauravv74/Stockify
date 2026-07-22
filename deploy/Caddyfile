@@ -1,0 +1,12 @@
+{$STOCKLY_DOMAIN} {
+	encode gzip
+
+	# Long-lived NDJSON availability checks
+	reverse_proxy stockly:5001 {
+		flush_interval -1
+		transport http {
+			read_timeout 600s
+			write_timeout 600s
+		}
+	}
+}

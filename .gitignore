@@ -16,6 +16,7 @@ blinkit_availability.csv
 .playwright/
 .DS_Store
 *.log
+*.pem
 
 # Large chat/agent dumps — not application code
 Untitled-1.md
