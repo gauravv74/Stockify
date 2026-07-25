@@ -94,9 +94,14 @@ class BigBasket:
         return sa_ids, sa_list
 
     def _search(self, s, query):
-        slug = quote(query.strip())
-        r = s.get(SEARCH_URL, params={"type": "ps", "slug": slug, "page": "1"},
-                  headers=_headers(BASE + "/ps/?q=" + slug),
+        # Pass the raw query as the `slug` param; curl_cffi URL-encodes params
+        # itself. Pre-encoding with quote() here double-encodes multi-word
+        # queries (space -> %20 -> %2520), so BigBasket receives a corrupted
+        # search term and returns almost nothing (e.g. "iphone 16" matched only
+        # an accessory). Only the referer header needs manual encoding.
+        term = query.strip()
+        r = s.get(SEARCH_URL, params={"type": "ps", "slug": term, "page": "1"},
+                  headers=_headers(BASE + "/ps/?q=" + quote(term)),
                   impersonate=IMPERSONATE, timeout=30)
         try:
             j = r.json()
