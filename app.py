@@ -206,6 +206,8 @@ def admin_create_user():
         payload.get("password"),
         platforms=payload.get("platforms"),
         role=payload.get("role") or "user",
+        cities=payload.get("cities"),
+        allow_pincodes=payload.get("allow_pincodes", True),
     )
     if err:
         return jsonify({"error": err}), 400
@@ -222,6 +224,8 @@ def admin_update_user(user_id):
         active=payload.get("active"),
         password=payload.get("password"),
         role=payload.get("role"),
+        cities=payload.get("cities"),
+        allow_pincodes=payload.get("allow_pincodes"),
     )
     if err:
         code = 404 if err == "User not found." else 400
@@ -242,12 +246,24 @@ def admin_delete_user(user_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/admin/searches")
+@auth.admin_required
+def admin_list_searches():
+    try:
+        limit = int(request.args.get("limit", 200))
+    except (TypeError, ValueError):
+        limit = 200
+    return jsonify({"searches": auth.list_searches(limit)})
+
+
 @app.route("/api/cities")
 @auth.login_required
 def api_cities():
+    allowed = auth.allowed_cities(auth.current_user())  # None == all cities
     cities = [
         {"id": c["id"], "name": c["name"], "state": c.get("state", ""), "count": c["count"]}
         for c in load_cities()
+        if allowed is None or c["id"] in allowed
     ]
     return jsonify({"cities": cities})
 
@@ -298,6 +314,30 @@ def _check_bigbasket(q, lat, lon, pin):
     return bb.match_row(q, res)
 
 
+def _check_flipkart(q, lat, lon):
+    import flipkart_check as fk
+    res = fk.client.check(float(lat), float(lon), q)
+    return fk.match_row(q, res)
+
+
+def _check_jiomart(q, lat, lon, pin):
+    import jiomart_check as jm
+    res = jm.client.check(float(lat), float(lon), q, pin)
+    return jm.match_row(q, res)
+
+
+def _check_apple(q, lat, lon, pin):
+    import apple_check as ap
+    res = ap.client.check(float(lat), float(lon), q, pin)
+    return ap.match_row(q, res)
+
+
+def _check_croma(q, lat, lon, pin):
+    import croma_check as cr
+    res = cr.client.check(float(lat), float(lon), q, pin)
+    return cr.match_row(q, res)
+
+
 def _check_one(platform, session, q, lat, lon, pin):
     if platform == "instamart":
         return _check_instamart(q, lat, lon)
@@ -305,6 +345,14 @@ def _check_one(platform, session, q, lat, lon, pin):
         return _check_zepto(q, lat, lon)
     if platform == "bigbasket":
         return _check_bigbasket(q, lat, lon, pin)
+    if platform == "flipkart":
+        return _check_flipkart(q, lat, lon)
+    if platform == "jiomart":
+        return _check_jiomart(q, lat, lon, pin)
+    if platform == "apple":
+        return _check_apple(q, lat, lon, pin)
+    if platform == "croma":
+        return _check_croma(q, lat, lon, pin)
     return _check_blinkit(session, q, lat, lon)
 
 
@@ -314,6 +362,21 @@ def check():
     user = auth.current_user()
     allowed = auth.allowed_platforms(user)
     payload = request.get_json(force=True, silent=True) or {}
+
+    # Enforce per-user location access: drop cities the user isn't granted, and
+    # ignore any custom pincodes if the user isn't allowed to enter them.
+    allowed_city_ids = auth.allowed_cities(user)  # None == unrestricted
+    if allowed_city_ids is not None:
+        req_cities = payload.get("cities") or []
+        if isinstance(req_cities, str):
+            req_cities = [c.strip() for c in re.split(r"[\n,]+", req_cities) if c.strip()]
+        payload["cities"] = [
+            c for c in req_cities
+            if str(c).strip().lower().replace(" ", "-") in allowed_city_ids
+        ]
+    if not auth.can_use_pincodes(user):
+        payload["pincodes"] = []
+
     pincodes, selected_cities = resolve_pincodes(payload)
     products = parse_products(payload.get("products", [])) or ["iphone 17"]
     platforms = resolve_platforms(payload.get("platform"), allowed)
@@ -321,8 +384,18 @@ def check():
 
     if not platforms:
         return jsonify({
-            "error": "No platform access. Ask an admin to enable Blinkit / Instamart / Zepto / BigBasket for your account."
+            "error": "No platform access. Ask an admin to enable Blinkit / Instamart / Zepto / BigBasket / Flipkart Minutes / JioMart / Apple / Croma for your account."
         }), 403
+
+    # Audit the request so admins can see what users searched.
+    auth.log_search(
+        user,
+        "all" if multi else platforms[0],
+        products,
+        [c["name"] for c in selected_cities],
+        len(pincodes),
+        len(pincodes) * len(products) * len(platforms),
+    )
 
     def generate():
         if not pincodes:

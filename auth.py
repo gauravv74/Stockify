@@ -18,7 +18,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import config
 
-ALL_PLATFORMS = ("blinkit", "instamart", "zepto", "bigbasket")
+ALL_PLATFORMS = ("blinkit", "instamart", "zepto", "bigbasket", "flipkart", "jiomart", "apple", "croma")
 DEFAULT_ADMIN_USER = config.DEFAULT_ADMIN_USER
 DEFAULT_ADMIN_PASS = config.DEFAULT_ADMIN_PASS
 
@@ -64,15 +64,41 @@ def _platforms_from_json(raw):
     return {p: bool(data.get(p, False)) for p in ALL_PLATFORMS}
 
 
+def _cities_to_json(cities):
+    """Store the allowed-city ids as a JSON list. Empty list == all cities."""
+    if not isinstance(cities, (list, tuple, set)):
+        return "[]"
+    seen, out = set(), []
+    for c in cities:
+        cid = str(c).strip().lower().replace(" ", "-")
+        if cid and cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return json.dumps(out)
+
+
+def _cities_from_json(raw):
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:
+        data = []
+    if not isinstance(data, list):
+        return []
+    return [str(c) for c in data]
+
+
 def _row_to_user(row):
     if not row:
         return None
+    keys = row.keys()
     return {
         "id": row["id"],
         "username": row["username"],
         "password_hash": row["password_hash"],
         "role": row["role"],
         "platforms": _platforms_from_json(row["platforms_json"]),
+        "cities": _cities_from_json(row["cities_json"]) if "cities_json" in keys else [],
+        "allow_pincodes": bool(row["allow_pincodes"]) if "allow_pincodes" in keys else True,
         "active": bool(row["active"]),
         "must_change_password": bool(row["must_change_password"]),
         "created_at": row["created_at"],
@@ -85,6 +111,9 @@ def _public_user(u):
         "username": u["username"],
         "role": u["role"],
         "platforms": {p: bool(u.get("platforms", {}).get(p, False)) for p in ALL_PLATFORMS},
+        # Empty list == unrestricted (all cities). Admins are always unrestricted.
+        "cities": [] if u.get("role") == "admin" else list(u.get("cities", []) or []),
+        "allow_pincodes": True if u.get("role") == "admin" else bool(u.get("allow_pincodes", True)),
         "active": bool(u.get("active", True)),
         "must_change_password": bool(u.get("must_change_password", False)),
         "created_at": u.get("created_at"),
@@ -170,6 +199,30 @@ def init_db():
                 )
                 """
             )
+            # Additive migrations for per-user location access. Existing rows get
+            # cities_json='[]' (all cities) and allow_pincodes=1 (backward compatible).
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "cities_json" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN cities_json TEXT NOT NULL DEFAULT '[]'")
+            if "allow_pincodes" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN allow_pincodes INTEGER NOT NULL DEFAULT 1")
+            # Audit log of what each user searched (admins can review it).
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS searches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    username TEXT,
+                    created_at TEXT NOT NULL,
+                    platform TEXT,
+                    products TEXT,
+                    cities TEXT,
+                    pincode_count INTEGER NOT NULL DEFAULT 0,
+                    total_checks INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_searches_created ON searches(created_at DESC)")
             n = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
             created_default = False
             if n == 0:
@@ -234,7 +287,8 @@ def authenticate(username, password):
     return _public_user(user)
 
 
-def create_user(username, password, platforms=None, role="user"):
+def create_user(username, password, platforms=None, role="user", cities=None,
+                 allow_pincodes=True):
     username = (username or "").strip()
     if not username or len(username) < 3:
         return None, "Username must be at least 3 characters."
@@ -249,14 +303,21 @@ def create_user(username, password, platforms=None, role="user"):
         if not any(plats.values()):
             return None, "Enable at least one platform."
 
+    cities_json = "[]" if role == "admin" else _cities_to_json(cities)
+    allow_pin = True if role == "admin" else bool(allow_pincodes)
+    # A restricted user must be able to reach at least one location.
+    if role == "user" and not allow_pin and cities_json == "[]":
+        return None, "Give access to at least one city, or allow pincode entry."
+
     try:
         with _conn() as conn:
             user_id = str(uuid.uuid4())
             conn.execute(
                 """
                 INSERT INTO users
-                (id, username, password_hash, role, platforms_json, active, must_change_password, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, 0, ?)
+                (id, username, password_hash, role, platforms_json, cities_json,
+                 allow_pincodes, active, must_change_password, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
                 """,
                 (
                     user_id,
@@ -264,6 +325,8 @@ def create_user(username, password, platforms=None, role="user"):
                     generate_password_hash(password),
                     role,
                     _platforms_to_json(plats),
+                    cities_json,
+                    1 if allow_pin else 0,
                     _now(),
                 ),
             )
@@ -272,7 +335,8 @@ def create_user(username, password, platforms=None, role="user"):
         return None, "Username already exists."
 
 
-def update_user(user_id, *, platforms=None, active=None, password=None, role=None):
+def update_user(user_id, *, platforms=None, active=None, password=None, role=None,
+                cities=None, allow_pincodes=None):
     user = find_user_by_id(user_id)
     if not user:
         return None, "User not found."
@@ -289,6 +353,18 @@ def update_user(user_id, *, platforms=None, active=None, password=None, role=Non
     new_role = user["role"] if role is None else role
     if new_role not in ("admin", "user"):
         return None, "Invalid role."
+
+    # Location access (ignored for admins, who are always unrestricted).
+    new_cities_json = _cities_to_json(user.get("cities", []))
+    if cities is not None:
+        new_cities_json = _cities_to_json(cities)
+    new_allow_pin = bool(user.get("allow_pincodes", True))
+    if allow_pincodes is not None:
+        new_allow_pin = bool(allow_pincodes)
+    if new_role == "admin":
+        new_cities_json, new_allow_pin = "[]", True
+    elif not new_allow_pin and new_cities_json == "[]":
+        return None, "Give access to at least one city, or allow pincode entry."
 
     with _conn() as conn:
         if user["role"] == "admin" and (not new_active or new_role != "admin"):
@@ -316,12 +392,15 @@ def update_user(user_id, *, platforms=None, active=None, password=None, role=Non
         conn.execute(
             """
             UPDATE users
-            SET role = ?, platforms_json = ?, active = ?, password_hash = ?, must_change_password = ?
+            SET role = ?, platforms_json = ?, cities_json = ?, allow_pincodes = ?,
+                active = ?, password_hash = ?, must_change_password = ?
             WHERE id = ?
             """,
             (
                 new_role,
                 _platforms_to_json(plats),
+                new_cities_json,
+                1 if new_allow_pin else 0,
                 1 if new_active else 0,
                 pwd_hash,
                 1 if must_change else 0,
@@ -372,6 +451,49 @@ def delete_user(user_id):
     return True, None
 
 
+def log_search(user, platform, products, cities, pincode_count, total_checks):
+    """Record a search request so admins can review user activity."""
+    try:
+        uname = (user or {}).get("username")
+        uid = (user or {}).get("id")
+        products_s = ", ".join(products) if isinstance(products, (list, tuple)) else str(products or "")
+        cities_s = ", ".join(cities) if isinstance(cities, (list, tuple)) else str(cities or "")
+        with _conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO searches
+                (user_id, username, created_at, platform, products, cities, pincode_count, total_checks)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (uid, uname, _now(), platform, products_s[:500], cities_s[:500],
+                 int(pincode_count or 0), int(total_checks or 0)),
+            )
+    except Exception:
+        # Never let audit logging break a search.
+        pass
+
+
+def list_searches(limit=200):
+    limit = max(1, min(int(limit or 200), 1000))
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM searches ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "username": r["username"],
+            "created_at": r["created_at"],
+            "platform": r["platform"],
+            "products": r["products"],
+            "cities": r["cities"],
+            "pincode_count": r["pincode_count"],
+            "total_checks": r["total_checks"],
+        }
+        for r in rows
+    ]
+
+
 def current_user():
     uid = session.get("user_id")
     if not uid:
@@ -401,6 +523,25 @@ def allowed_platforms(user):
         return list(ALL_PLATFORMS)
     plats = user.get("platforms") or {}
     return [p for p in ALL_PLATFORMS if plats.get(p)]
+
+
+def allowed_cities(user):
+    """Return the set of city ids a user may access, or None if unrestricted.
+
+    Admins and users with an empty allow-list are unrestricted (all cities).
+    """
+    if not user or user.get("role") == "admin":
+        return None
+    ids = [str(c).strip().lower() for c in (user.get("cities") or []) if str(c).strip()]
+    return set(ids) if ids else None
+
+
+def can_use_pincodes(user):
+    if not user:
+        return False
+    if user.get("role") == "admin":
+        return True
+    return bool(user.get("allow_pincodes", True))
 
 
 def login_required(fn):

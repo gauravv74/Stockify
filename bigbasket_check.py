@@ -23,6 +23,8 @@ Matching reuses blinkit_check.best_match (accessory-aware).
 """
 
 import base64
+import json
+import re
 import threading
 from urllib.parse import quote
 
@@ -108,7 +110,111 @@ class BigBasket:
             prods = j["tabs"][0]["product_info"]["products"]
         except Exception:
             return []
-        return _parse_products(prods)
+        items = _parse_products(prods)
+        for it in items:
+            it["source"] = "express"
+        return items
+
+    def _search_marketplace(self, query, pincode):
+        """Search the full BigBasket marketplace catalog, scoped only by pincode.
+
+        The express (bbNow) serving area resolved from lat/long carries a small
+        catalog (~thousands of grocery essentials) that omits electronics/large
+        appliances in many cities. Those items live in the standard BigBasket
+        catalog, which ships pan-India and is what the mobile app shows for a
+        pincode. A session carrying *only* `_bb_pin_code` (no lat/long / address
+        / serving-area cookies) returns that full catalog, so device queries
+        like "iphone 17" surface here even where the local express store lacks
+        them.
+
+        BEWARE: this catalog is national -- every item comes back `avail_status
+        001` regardless of pincode, so the search alone CANNOT tell whether a
+        marketplace item actually delivers to the given location. Items returned
+        here are tagged `source="marketplace"` and must be verified per-pincode
+        via `_pd_avail_status()` before being reported as in stock.
+        """
+        s = self._seed()
+        if pincode:
+            self._set_cookie(s, "_bb_pin_code", str(pincode))
+        items = self._search(s, query)
+        for it in items:
+            it["source"] = "marketplace"
+        return items
+
+    def _pd_avail_status(self, product_id, lat, lon, pincode):
+        """Resolve the real per-location availability of a marketplace product.
+
+        The listing search is national, but the product-detail page is rendered
+        server-side using the delivery-location cookies and embeds the true
+        availability for that lat/long/pincode in `__NEXT_DATA__`
+        (`props.pageProps.productDetails`). Return values:
+            "001"   -> deliverable & in stock
+            "000"   -> serviceable but temporarily out of stock ("coming soon")
+            "010"   -> not delivered to this location ("we are currently not
+                       delivering this")
+            "error" -> the PD service refused to serve the location (e.g.
+                       PD4007 / SERVE3056 "No SA found for request"); the item
+                       is not deliverable to this pincode.
+            None    -> could not be determined (network/parse failure). The
+                       caller must treat this conservatively, NOT as in stock.
+        """
+        if not product_id:
+            return None
+        last = None
+        for attempt in range(2):
+            try:
+                s = self._seed()
+                self._set_location(s, lat, lon, pincode)
+                # The PD (BB2) serviceability service needs the resolved serving
+                # area; without it the page errors with "No SA found".
+                self._resolve_sa(s)
+                r = s.get(f"{BASE}/pd/{product_id}/x/",
+                          headers=_headers(BASE + "/"),
+                          impersonate=IMPERSONATE, timeout=30)
+                m = re.search(
+                    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                    r.text, re.S)
+                if not m:
+                    last = None
+                    continue
+                data = json.loads(m.group(1))
+                pd = (data.get("props", {}) or {}).get("pageProps", {}) or {}
+                details = pd.get("productDetails")
+                if isinstance(details, dict) and details.get("errors"):
+                    # Serviceability error => not deliverable to this location.
+                    return "error"
+                found = []
+
+                def walk(o):
+                    if isinstance(o, dict):
+                        if "avail_status" in o and "button" in o:
+                            found.append(o.get("avail_status"))
+                        for v in o.values():
+                            walk(v)
+                    elif isinstance(o, list):
+                        for v in o:
+                            walk(v)
+
+                walk(data)
+                if found:
+                    return found[0]
+                last = None
+            except Exception:
+                last = None
+        return last
+
+    @staticmethod
+    def _merge_items(primary, extra):
+        """Union of two product lists, de-duplicated by product_id (falling back
+        to name+variant). `primary` (express) wins on collisions."""
+        out, seen = [], set()
+        for it in list(primary) + list(extra):
+            key = it.get("product_id") or (it.get("name"), it.get("variant"))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(it)
+        return out
 
     def _query(self, lat, lon, query, pincode):
         s = self._seed()
@@ -121,8 +227,16 @@ class BigBasket:
             if e.get("eta"):
                 eta = e["eta"]
                 break
+        # Express (location-accurate) catalog first, then merge in the wider
+        # marketplace catalog so electronics missing from the local express
+        # store still show up (matches what the app shows for the pincode).
         items = self._search(s, query)
-        return {"serviceable": True, "sa": sa_ids, "eta": eta, "items": items}
+        try:
+            items = self._merge_items(items, self._search_marketplace(query, pincode))
+        except Exception:
+            pass
+        return {"serviceable": True, "sa": sa_ids, "eta": eta, "items": items,
+                "lat": lat, "lon": lon, "pincode": pincode}
 
     def check(self, lat, lon, query, pincode=None):
         with self._lock:
@@ -173,15 +287,42 @@ def match_row(query, result):
     if result.get("serviceable") is False:
         return {"status": "not_serviceable"}
     items = result.get("items", [])
-    m = bk.best_match(query, items)
+    # Match the location-accurate express catalog first; only if the query has
+    # no express match (e.g. electronics the local bbNow store doesn't stock) do
+    # we consider the wider national marketplace catalog -- whose stock flag is
+    # location-agnostic and must be verified per-pincode via the product page.
+    express = [it for it in items if it.get("source") != "marketplace"]
+    market = [it for it in items if it.get("source") == "marketplace"]
+
+    m = bk.best_match(query, express)
+    eta = result.get("eta") or ""
+    in_stock = bool(m.get("inStock")) if m else False
+
     if not m:
-        return {"status": "not_found", "merchant_id": ",".join(map(str, result.get("sa", [])))}
+        m = bk.best_match(query, market)
+        if not m:
+            return {"status": "not_found",
+                    "merchant_id": ",".join(map(str, result.get("sa", [])))}
+        st = client._pd_avail_status(
+            m.get("product_id"), result.get("lat"), result.get("lon"),
+            result.get("pincode"))
+        # Only a confirmed "001" from the product page counts as in stock. The
+        # search-level flag is national and must never be trusted for a
+        # marketplace item, or we falsely report it deliverable everywhere.
+        in_stock = (st == "001")
+        if st in ("010", "error"):
+            eta = "not delivered to this location"
+        elif st == "000":
+            eta = "temporarily out of stock"
+        elif st is None:
+            eta = "availability unverified"
+
     return {
-        "status": "available" if m.get("inStock") else "out_of_stock",
-        "available": "yes" if m.get("inStock") else "no",
+        "status": "available" if in_stock else "out_of_stock",
+        "available": "yes" if in_stock else "no",
         "name": m.get("name"), "variant": m.get("variant"), "brand": m.get("brand"),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
-        "eta": result.get("eta") or "", "merchant_id": ",".join(map(str, result.get("sa", []))),
+        "eta": eta, "merchant_id": ",".join(map(str, result.get("sa", []))),
     }
 
 

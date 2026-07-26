@@ -486,6 +486,41 @@
   </div>
 </div>
 
+<div id="accessModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="accessTitle">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-head">
+      <h3 id="accessTitle">Edit access</h3>
+      <button type="button" class="icon-btn" id="accessClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-msg" id="accessMsg"></div>
+      <p class="hint" id="accessWho" style="margin:0 0 12px;"></p>
+
+      <div class="field-label" style="margin:0 0 6px;">City access</div>
+      <div class="plat-toggles" style="grid-template-columns:1fr;">
+        <label class="plat-toggle">All cities
+          <span class="switch"><input type="checkbox" id="editAllCities" /><span class="slider"></span></span>
+        </label>
+      </div>
+      <div id="editCityWrap" style="display:none; margin-top:8px;">
+        <div class="city-tools">
+          <input type="search" id="editCitySearch" placeholder="Search cities to grant…" autocomplete="off" />
+        </div>
+        <div class="city-list" id="editCityList" style="max-height:200px;" role="group" aria-label="Grant cities"></div>
+      </div>
+
+      <div class="field-label" style="margin:16px 0 6px;">Pincode entry</div>
+      <div class="plat-toggles" style="grid-template-columns:1fr;">
+        <label class="plat-toggle">Allow custom pincode entry
+          <span class="switch"><input type="checkbox" id="editAllowPins" /><span class="slider"></span></span>
+        </label>
+      </div>
+
+      <button type="button" class="btn btn-primary" id="accessSave" style="width:100%; margin-top:16px;">Save access</button>
+    </div>
+  </div>
+</div>
+
 <header class="topbar">
   <div class="brand">
     <div class="brand-mark" aria-hidden="true">
@@ -498,7 +533,7 @@
     </div>
     <div class="brand-text">
       <h1>Stockly</h1>
-      <p>Live stock across Blinkit, Instamart, Zepto & BigBasket</p>
+      <p>Live stock across Blinkit, Instamart, Zepto, BigBasket, Flipkart Minutes, JioMart, Apple & Croma</p>
     </div>
   </div>
   <div class="topbar-actions">
@@ -551,8 +586,41 @@
             <label class="plat-toggle">BigBasket
               <span class="switch"><input type="checkbox" data-plat="bigbasket" /><span class="slider"></span></span>
             </label>
+            <label class="plat-toggle">Flipkart Minutes
+              <span class="switch"><input type="checkbox" data-plat="flipkart" /><span class="slider"></span></span>
+            </label>
+            <label class="plat-toggle">JioMart
+              <span class="switch"><input type="checkbox" data-plat="jiomart" /><span class="slider"></span></span>
+            </label>
+            <label class="plat-toggle">Apple
+              <span class="switch"><input type="checkbox" data-plat="apple" /><span class="slider"></span></span>
+            </label>
+            <label class="plat-toggle">Croma
+              <span class="switch"><input type="checkbox" data-plat="croma" /><span class="slider"></span></span>
+            </label>
           </div>
-          <button type="button" class="btn btn-primary" id="createUserBtn" style="width:100%;">Create &amp; share credentials</button>
+
+          <div class="field-label" style="margin:16px 0 6px;">City access</div>
+          <div class="plat-toggles" style="grid-template-columns:1fr;">
+            <label class="plat-toggle">All cities
+              <span class="switch"><input type="checkbox" id="newAllCities" checked /><span class="slider"></span></span>
+            </label>
+          </div>
+          <div id="newCityWrap" style="display:none; margin-top:8px;">
+            <div class="city-tools">
+              <input type="search" id="newCitySearch" placeholder="Search cities to grant…" autocomplete="off" />
+            </div>
+            <div class="city-list" id="newCityList" style="max-height:180px;" role="group" aria-label="Grant cities"></div>
+          </div>
+
+          <div class="field-label" style="margin:16px 0 6px;">Pincode entry</div>
+          <div class="plat-toggles" style="grid-template-columns:1fr;">
+            <label class="plat-toggle">Allow custom pincode entry
+              <span class="switch"><input type="checkbox" id="newAllowPins" checked /><span class="slider"></span></span>
+            </label>
+          </div>
+
+          <button type="button" class="btn btn-primary" id="createUserBtn" style="width:100%; margin-top:16px;">Create &amp; share credentials</button>
         </div>
       </div>
 
@@ -563,12 +631,34 @@
             <tr>
               <th>User</th>
               <th>Platforms</th>
+              <th>Location access</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="usersTbody">
-            <tr><td colspan="4" class="empty" style="padding:24px;">Loading…</td></tr>
+            <tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; margin:22px 0 8px;">
+        <div class="field-label" style="margin:0;">Recent searches</div>
+        <button type="button" class="link-btn" id="refreshSearches">Refresh</button>
+      </div>
+      <div style="overflow:auto;">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>User</th>
+              <th>Platform</th>
+              <th>Products</th>
+              <th>Locations</th>
+            </tr>
+          </thead>
+          <tbody id="searchesTbody">
+            <tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -599,6 +689,22 @@
       <button class="plat" data-platform="bigbasket" role="tab" aria-selected="false">
         <span class="dot" style="--dot:#65a30d"></span>
         <span class="label-full">BigBasket</span><span class="label-short">BB</span>
+      </button>
+      <button class="plat" data-platform="flipkart" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#2874f0"></span>
+        <span class="label-full">Flipkart Minutes</span><span class="label-short">Minutes</span>
+      </button>
+      <button class="plat" data-platform="jiomart" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#e4002b"></span>
+        <span class="label-full">JioMart</span><span class="label-short">JioMart</span>
+      </button>
+      <button class="plat" data-platform="apple" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#555555"></span>
+        <span class="label-full">Apple</span><span class="label-short">Apple</span>
+      </button>
+      <button class="plat" data-platform="croma" role="tab" aria-selected="false">
+        <span class="dot" style="--dot:#14b8a6"></span>
+        <span class="label-full">Croma</span><span class="label-short">Croma</span>
       </button>
     </div>
   </div>
@@ -713,6 +819,9 @@ let selectedCities = new Set();
 let currentUser = null;
 let allowedPlatforms = [];
 let citiesLoaded = false;
+let newUserCities = new Set();
+let editUserCities = new Set();
+let editAccessUserId = null;
 
 const PLATFORMS = {
   all:       { name: 'All platforms',    short: 'Stockly',                 logo: null, color: '#0f766e' },
@@ -720,14 +829,18 @@ const PLATFORMS = {
   instamart: { name: 'Swiggy Instamart', short: 'Instamart · Stockly',     logo: 'S',  color: '#ea580c' },
   zepto:     { name: 'Zepto',            short: 'Zepto · Stockly',         logo: 'Z',  color: '#7c3aed' },
   bigbasket: { name: 'BigBasket',        short: 'BigBasket · Stockly',     logo: 'bb', color: '#65a30d' },
+  flipkart:  { name: 'Flipkart Minutes', short: 'Minutes · Stockly',       logo: 'FM', color: '#2874f0' },
+  jiomart:   { name: 'JioMart',          short: 'JioMart · Stockly',       logo: 'JM', color: '#e4002b' },
+  apple:     { name: 'Apple',            short: 'Apple · Stockly',         logo: '', color: '#555555' },
+  croma:     { name: 'Croma',            short: 'Croma · Stockly',         logo: 'C',  color: '#14b8a6' },
 };
 const PLAT_DOT = {
-  blinkit: '#f59e0b', instamart: '#ea580c', zepto: '#7c3aed', bigbasket: '#65a30d',
+  blinkit: '#f59e0b', instamart: '#ea580c', zepto: '#7c3aed', bigbasket: '#65a30d', flipkart: '#2874f0', jiomart: '#e4002b', apple: '#555555', croma: '#14b8a6',
 };
 const PLAT_LABEL = {
-  blinkit: 'Blinkit', instamart: 'Instamart', zepto: 'Zepto', bigbasket: 'BigBasket',
+  blinkit: 'Blinkit', instamart: 'Instamart', zepto: 'Zepto', bigbasket: 'BigBasket', flipkart: 'Flipkart Minutes', jiomart: 'JioMart', apple: 'Apple', croma: 'Croma',
 };
-const ALL_PLAT_KEYS = ['blinkit', 'instamart', 'zepto', 'bigbasket'];
+const ALL_PLAT_KEYS = ['blinkit', 'instamart', 'zepto', 'bigbasket', 'flipkart', 'jiomart', 'apple', 'croma'];
 
 function applyAuthUI() {
   const authed = !!currentUser;
@@ -754,6 +867,20 @@ function applyAuthUI() {
     $('appShell').style.display = '';
   }
   applyPlatformAccess();
+  applyLocationAccess();
+}
+
+function applyLocationAccess() {
+  // Non-admins who aren't allowed to enter custom pincodes only see the Cities
+  // mode; the pincode / both segments are hidden and the mode is forced.
+  const canPins = !currentUser || currentUser.role === 'admin' || currentUser.allow_pincodes !== false;
+  ['locPins', 'locBoth'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = canPins ? '' : 'none';
+  });
+  if (!canPins && (locMode === 'pincodes' || locMode === 'both')) {
+    setLocMode('cities');
+  }
 }
 
 function applyPlatformAccess() {
@@ -912,7 +1039,44 @@ function showAdminMsg(text, ok = true) {
 function openAdmin() {
   $('adminModal').classList.add('open');
   loadAdminUsers();
+  loadRecentSearches();
 }
+
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return escHtml(iso);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadRecentSearches() {
+  const tb = $('searchesTbody');
+  tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>`;
+  try {
+    const data = await apiJson('/api/admin/searches?limit=200');
+    const items = data.searches || [];
+    if (!items.length) {
+      tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">No searches yet.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = items.map(s => {
+      const loc = (s.cities && s.cities.trim())
+        ? escHtml(s.cities) + (s.pincode_count ? ` · ${s.pincode_count} pins` : '')
+        : (s.pincode_count ? `${s.pincode_count} pincode${s.pincode_count === 1 ? '' : 's'}` : '—');
+      const platLabel = PLAT_LABEL[s.platform] || (s.platform === 'all' ? 'All platforms' : (s.platform || '—'));
+      return `<tr>
+        <td class="sub" style="white-space:nowrap;">${fmtWhen(s.created_at)}</td>
+        <td><div class="uname">${escHtml(s.username || '—')}</div></td>
+        <td>${escHtml(platLabel)}</td>
+        <td>${escHtml(s.products || '—')}</td>
+        <td>${loc}</td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
+  }
+}
+$('refreshSearches').addEventListener('click', loadRecentSearches);
 function closeAdmin() {
   $('adminModal').classList.remove('open');
   $('adminMsg').className = 'admin-msg';
@@ -932,6 +1096,46 @@ function readNewPlatforms() {
   return out;
 }
 
+// Shared searchable city checklist used by the create form and the edit-access
+// modal. Mutates `selectedSet` as the admin ticks/unticks cities.
+function renderCityChecklist(listEl, selectedSet, filter = '') {
+  if (!listEl) return;
+  if (!citiesCatalog.length) {
+    listEl.innerHTML = `<div class="empty" style="padding:16px 12px;"><div class="empty-sub">Cities not loaded yet.</div></div>`;
+    return;
+  }
+  const q = filter.trim().toLowerCase();
+  const items = citiesCatalog.filter(c =>
+    !q || c.name.toLowerCase().includes(q) || (c.state || '').toLowerCase().includes(q));
+  listEl.innerHTML = items.length ? items.map(c => {
+    const on = selectedSet.has(c.id);
+    return `
+      <label class="city-item${on ? ' selected' : ''}" data-id="${escHtml(c.id)}">
+        <input type="checkbox" ${on ? 'checked' : ''} data-cid="${escHtml(c.id)}" />
+        <div class="meta">
+          <div class="name">${escHtml(c.name)}</div>
+          <div class="state">${escHtml(c.state || '')}</div>
+        </div>
+        <span class="pins">${c.count} pins</span>
+      </label>`;
+  }).join('') : `<div class="empty" style="padding:16px 12px;"><div class="empty-sub">No cities match “${escHtml(filter)}”.</div></div>`;
+  listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.cid;
+      if (cb.checked) selectedSet.add(id); else selectedSet.delete(id);
+      cb.closest('.city-item')?.classList.toggle('selected', cb.checked);
+    });
+  });
+}
+
+$('newAllCities').addEventListener('change', () => {
+  const all = $('newAllCities').checked;
+  $('newCityWrap').style.display = all ? 'none' : '';
+  if (!all) renderCityChecklist($('newCityList'), newUserCities, $('newCitySearch').value);
+});
+$('newCitySearch').addEventListener('input', (e) =>
+  renderCityChecklist($('newCityList'), newUserCities, e.target.value));
+
 $('createUserBtn').addEventListener('click', async () => {
   const username = $('newUser').value.trim();
   const password = $('newPass').value;
@@ -940,28 +1144,96 @@ $('createUserBtn').addEventListener('click', async () => {
     showAdminMsg('Enable at least one platform.', false);
     return;
   }
+  const allCities = $('newAllCities').checked;
+  const cities = allCities ? [] : Array.from(newUserCities);
+  const allow_pincodes = $('newAllowPins').checked;
+  if (!allCities && cities.length === 0 && !allow_pincodes) {
+    showAdminMsg('Grant at least one city, or allow custom pincode entry.', false);
+    return;
+  }
   try {
     await apiJson('/api/admin/users', {
       method: 'POST',
-      body: JSON.stringify({ username, password, platforms, role: 'user' }),
+      body: JSON.stringify({ username, password, platforms, role: 'user', cities, allow_pincodes }),
     });
     showAdminMsg(`Created “${username}”. Share ID + password privately.`);
     $('newUser').value = '';
     $('newPass').value = '';
+    newUserCities.clear();
+    $('newAllCities').checked = true;
+    $('newCityWrap').style.display = 'none';
+    $('newCitySearch').value = '';
+    $('newAllowPins').checked = true;
     await loadAdminUsers();
   } catch (err) {
     showAdminMsg(err.message, false);
   }
 });
 
+function citySummaryText(u) {
+  if (u.role === 'admin') return 'All cities';
+  const n = (u.cities || []).length;
+  return n ? `${n} cit${n === 1 ? 'y' : 'ies'}` : 'All cities';
+}
+
+function openEditAccess(u) {
+  editAccessUserId = u.id;
+  editUserCities = new Set(u.cities || []);
+  const all = (u.cities || []).length === 0;
+  $('editAllCities').checked = all;
+  $('editCityWrap').style.display = all ? 'none' : '';
+  $('editCitySearch').value = '';
+  $('editAllowPins').checked = u.allow_pincodes !== false;
+  $('accessWho').textContent = `Choose which cities “${u.username}” can query and whether they may enter custom pincodes.`;
+  $('accessMsg').className = 'admin-msg';
+  renderCityChecklist($('editCityList'), editUserCities, '');
+  $('accessModal').classList.add('open');
+}
+function closeEditAccess() {
+  $('accessModal').classList.remove('open');
+  editAccessUserId = null;
+}
+$('accessClose').addEventListener('click', closeEditAccess);
+$('accessModal').addEventListener('click', (e) => { if (e.target === $('accessModal')) closeEditAccess(); });
+$('editAllCities').addEventListener('change', () => {
+  const all = $('editAllCities').checked;
+  $('editCityWrap').style.display = all ? 'none' : '';
+  if (!all) renderCityChecklist($('editCityList'), editUserCities, $('editCitySearch').value);
+});
+$('editCitySearch').addEventListener('input', (e) =>
+  renderCityChecklist($('editCityList'), editUserCities, e.target.value));
+$('accessSave').addEventListener('click', async () => {
+  if (!editAccessUserId) return;
+  const allCities = $('editAllCities').checked;
+  const cities = allCities ? [] : Array.from(editUserCities);
+  const allow_pincodes = $('editAllowPins').checked;
+  if (!allCities && cities.length === 0 && !allow_pincodes) {
+    $('accessMsg').textContent = 'Grant at least one city, or allow custom pincode entry.';
+    $('accessMsg').className = 'admin-msg show err';
+    return;
+  }
+  try {
+    await apiJson('/api/admin/users/' + editAccessUserId, {
+      method: 'PATCH',
+      body: JSON.stringify({ cities, allow_pincodes }),
+    });
+    closeEditAccess();
+    await loadAdminUsers();
+    showAdminMsg('Access updated.');
+  } catch (err) {
+    $('accessMsg').textContent = err.message;
+    $('accessMsg').className = 'admin-msg show err';
+  }
+});
+
 async function loadAdminUsers() {
   const tb = $('usersTbody');
-  tb.innerHTML = `<tr><td colspan="4" class="empty" style="padding:24px;">Loading…</td></tr>`;
+  tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>`;
   try {
     const data = await apiJson('/api/admin/users');
     const users = data.users || [];
     if (!users.length) {
-      tb.innerHTML = `<tr><td colspan="4" class="empty" style="padding:24px;">No users yet.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">No users yet.</td></tr>`;
       return;
     }
     tb.innerHTML = users.map(u => {
@@ -971,9 +1243,15 @@ async function loadAdminUsers() {
         return `<button type="button" class="mini-tog ${on ? 'on' : 'off'}" data-uid="${escHtml(u.id)}" data-plat="${p}" ${locked ? 'disabled title="Admins always have full access"' : ''}>${escHtml(PLAT_LABEL[p])}</button>`;
       }).join('');
       const active = u.active !== false;
+      const pinsOn = u.role === 'admin' || u.allow_pincodes !== false;
+      const locCell = u.role === 'admin'
+        ? `<div class="sub">All cities · Pincodes on</div>`
+        : `<div class="uname" style="font-weight:600;">${escHtml(citySummaryText(u))}</div>
+           <div class="sub">Pincodes ${pinsOn ? 'on' : 'off'} · <button type="button" class="link-btn" data-act="access" data-uid="${escHtml(u.id)}">Edit</button></div>`;
       return `<tr>
         <td><div class="uname">${escHtml(u.username)}</div><div class="sub">${escHtml(u.role)}</div></td>
         <td><div class="mini-toggles">${toggles}</div></td>
+        <td>${locCell}</td>
         <td>${active ? '<span class="badge b-available">Active</span>' : '<span class="badge b-error">Disabled</span>'}</td>
         <td style="white-space:nowrap;">
           ${u.role === 'admin' ? '' : `<button type="button" class="link-btn" data-act="toggle" data-uid="${escHtml(u.id)}" data-active="${active ? '0' : '1'}">${active ? 'Disable' : 'Enable'}</button>
@@ -1004,6 +1282,11 @@ async function loadAdminUsers() {
     tb.querySelectorAll('[data-act]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const uid = btn.dataset.uid;
+        if (btn.dataset.act === 'access') {
+          const user = users.find(x => x.id === uid);
+          if (user) openEditAccess(user);
+          return;
+        }
         try {
           if (btn.dataset.act === 'delete') {
             if (!confirm('Delete this account?')) return;
@@ -1021,7 +1304,7 @@ async function loadAdminUsers() {
       });
     });
   } catch (err) {
-    tb.innerHTML = `<tr><td colspan="4" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -1370,7 +1653,7 @@ async function run() {
           const where = cityLabel
             ? `${cityLabel} · ${msg.pincodes} pins`
             : `${msg.pincodes} pins`;
-          const warm = (msg.platform === 'all' || msg.platform === 'instamart' || msg.platform === 'zepto')
+          const warm = (msg.platform === 'all' || msg.platform === 'instamart' || msg.platform === 'zepto' || msg.platform === 'flipkart' || msg.platform === 'jiomart' || msg.platform === 'apple')
             ? ' · browser-backed platforms may take longer on first run'
             : '';
           setStatus(`<span class="spin"></span><span>${platLabel} · ${where} · ${total} checks${warm}</span>`);
