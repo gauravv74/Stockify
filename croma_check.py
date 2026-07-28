@@ -27,23 +27,27 @@ Search endpoint (SAP-Hybris "solr" query syntax, `<query>:relevance`):
   A non-empty `stockFlag` (stores holding the item) means in stock.
 
 The search catalogue is national (a pincode parameter does not change search
-results), so availability is resolved in two steps, like the Apple checker:
+results), and -- crucially -- the search `stockFlag` is only a *national* signal
+("some store lists this SKU"), NOT whether it can be bought at a given pincode.
+Relying on it makes the app report "available" for items the storefront shows as
+"Not Available for your pincode" (e.g. iPhone 16 at 411067). So availability is
+resolved in two steps, like the Apple checker:
 
-  1. search  -> candidate SKUs + national stock (stockFlag non-empty).
-  2. for the best-matching SKU, per-pincode deliverability via
-     GET api.croma.com/sku/v1/essentialcombo?pinCode=<pin>&ProductSkus=<code>
-     which returns HTTP 200 when the item can be delivered to that pincode and
-     HTTP 400 {"Message":"Unavailable in IC"} when it cannot (this mirrors the
-     storefront's per-product "Not Available at pincode <city>, <pin>" label,
-     and is product-specific: e.g. large TVs are undeliverable to Leh/Andaman
-     while phones/earbuds may still be). The TMS "promise" endpoint is not used
-     because it needs cart/session state and reports everything unavailable
-     from a bare context.
+  1. search  -> candidate SKUs (variants) for the query.
+  2. for the best-matching variant, real per-pincode availability via the OMS
+     TMS "promise" endpoint the PDP itself calls:
+       POST api.croma.com/inventory/oms/v2/tms/details-pwa/
+     A returned home-delivery (HDEL) promise line == deliverable & in stock at
+     that pincode; an HDEL line under unavailableLine (NOT_ENOUGH_PRODUCT_CHOICES)
+     == listed but not deliverable/in stock there. This mirrors the storefront's
+     "Delivery at <pin>: Available / Not Available for your pincode" label
+     exactly. If the best-matching variant is unavailable, a few other variants
+     of the same model are probed so we don't report the whole model as
+     unavailable when a different colour/storage is deliverable.
 
 So the matched product resolves to:
-  * not_serviceable  -> in the catalogue but not deliverable to this pincode,
-  * out_of_stock     -> deliverable but no national stock,
-  * available        -> deliverable and in stock.
+  * out_of_stock  -> listed but not deliverable/in stock at this pincode,
+  * available     -> deliverable and in stock at this pincode (HDEL promise).
 
 Exposes a thread-safe singleton `client` with .check(lat, lon, query, pincode).
 Matching reuses blinkit_check.best_match (accessory-aware).
@@ -61,6 +65,11 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
 
 WARMUP_URL = "https://www.croma.com/"
+
+# When the best-matching variant isn't deliverable to a pincode, probe up to
+# this many matching variants (in-stock first) before declaring the model
+# unavailable there. Bounds the number of extra TMS calls per query.
+MAX_TMS_PROBES = 6
 
 # Init script: save the pristine fetch before Croma's Akamai bot script wraps
 # window.fetch, and apply the same light stealth the Apple checker uses.
@@ -111,29 +120,54 @@ async (q) => {
 }
 """
 
-# Per-pincode deliverability for one SKU. HTTP 200 => the item can be delivered
-# to the pincode; HTTP 400 {"Message":"Unavailable in IC"} => it cannot. Returns
-# {serviceable: true|false|null} (null on an unexpected error, so the caller can
-# fall back to national stock rather than wrongly reporting "not serviceable").
+# Real per-pincode availability for one SKU.
+#
+# The search `stockFlag` is only a *national* signal ("some store lists this
+# SKU"); it does NOT mean the item can be bought/delivered to a given pincode.
+# The storefront's PDP resolves the real "Delivery at <pin>: Available / Not
+# Available for your pincode" label from the OMS TMS "promise" endpoint, which
+# checks live inventory sourcing for the delivery address. We POST the same
+# payload the PWA sends (home-delivery line HDEL + store/express lines) and read
+# the promise: a returned HDEL `promiseLine` == deliverable & in stock at that
+# pincode; an HDEL entry under `unavailableLine` with reason
+# NOT_ENOUGH_PRODUCT_CHOICES == listed but not deliverable/in stock there. (The
+# STOR/SDEL lines come back SOURCING_RULE_NOT_DEFINED for online orders and are
+# ignored.) `categoryType` does not affect the result.
+#
+# Returns {available: true|false|null} (null only on a network/parse error, so
+# the caller can fall back to national stock rather than mislabel a real listing).
+TMS_URL = "https://api.croma.com/inventory/oms/v2/tms/details-pwa/"
+
 SERVICEABLE_JS = r"""
 async ([code, pin]) => {
   const f = window.__nf || window.fetch;
-  const url = 'https://api.croma.com/sku/v1/essentialcombo?pinCode='
-            + encodeURIComponent(pin) + '&ProductSkus=' + encodeURIComponent(code);
+  const line = (ft, id) => ({
+    fulfillmentType: ft, mch: '', itemID: code, lineId: id,
+    categoryType: 'general',
+    reqEndDate: ft === 'HDEL' ? '2500-01-01' : '', reqStartDate: '',
+    requiredQty: '1',
+    shipToAddress: {company: '', country: '', city: '', mobilePhone: '',
+      state: '', zipCode: pin, extn: {irlAddressLine1: '', irlAddressLine2: ''}},
+    extn: {widerStoreFlag: 'N'},
+  });
+  const body = {promise: {allocationRuleID: 'SYSTEM', checkInventory: 'Y',
+    organizationCode: 'CROMA', sourcingClassification: 'EC',
+    promiseLines: {promiseLine: [line('HDEL', '1'), line('STOR', '2'), line('SDEL', '3')]}}};
   let r;
   try {
-    r = await f(url, {headers: {accept: 'application/json'}, credentials: 'include'});
-  } catch (e) { return {serviceable: null}; }
-  if (r.status === 200) return {serviceable: true};
-  if (r.status === 400) {
-    let t = '';
-    try { t = await r.text(); } catch (e) {}
-    // Only treat the explicit "Unavailable in IC" as not-serviceable; other
-    // 400s are ambiguous and shouldn't mask a real listing.
-    if (/unavailable in ic/i.test(t)) return {serviceable: false};
-    return {serviceable: null};
-  }
-  return {serviceable: null};
+    r = await f('https://api.croma.com/inventory/oms/v2/tms/details-pwa/', {
+      method: 'POST',
+      headers: {'content-type': 'application/json', accept: 'application/json'},
+      credentials: 'include', body: JSON.stringify(body)});
+  } catch (e) { return {available: null}; }
+  if (!r || r.status !== 200) return {available: null};
+  let j;
+  try { j = await r.json(); } catch (e) { return {available: null}; }
+  const so = (j.promise || {}).suggestedOption || {};
+  const avail = (((so.option || {}).promiseLines || {}).promiseLine) || [];
+  // Home delivery (HDEL) available for this pincode => in stock & deliverable.
+  const hdel = avail.some(l => (l.fulfillmentType || '') === 'HDEL' || l.lineId === '1');
+  return {available: hdel};
 }
 """
 
@@ -216,17 +250,39 @@ class Croma:
                     "error": f"search blocked (status={res.get('status')})"}
 
         items = res.get("items", [])
-        # Resolve per-pincode deliverability for the single best match (one extra
-        # call, like Apple), and annotate that item so match_row can reflect it.
         m = bk.best_match(query, items) if items else None
-        if m and m.get("merchant_id") and pincode:
-            svc = await self._page.evaluate(
-                SERVICEABLE_JS, [str(m["merchant_id"]), str(pincode)])
-            m["pinServiceable"] = svc.get("serviceable")
-        return {"serviceable": True, "items": items}
+        if not (m and pincode):
+            return {"serviceable": True, "items": items, "match": m}
+
+        # Real per-pincode availability comes from the TMS promise, not the
+        # national stockFlag. Probe the best match first; if it isn't deliverable
+        # here, try a few other variants of the same model (in-stock ones first)
+        # so a single out-of-stock colour doesn't hide a deliverable variant.
+        candidates = _ranked_variants(query, items, m)
+        chosen, saw_error = None, False
+        for cand in candidates[:MAX_TMS_PROBES]:
+            code = cand.get("merchant_id")
+            if not code:
+                continue
+            svc = await self._page.evaluate(SERVICEABLE_JS, [str(code), str(pincode)])
+            avail = svc.get("available")
+            cand["pinAvailable"] = avail
+            if avail is True:
+                chosen = cand
+                break
+            if avail is None:
+                saw_error = True
+        # If nothing was deliverable, keep the best match and mark why: False =>
+        # confirmed not available at this pincode; None => TMS errored, so
+        # match_row falls back to national stock instead of hiding a real listing.
+        resolved = chosen or m
+        if chosen is None:
+            resolved["pinAvailable"] = None if saw_error else False
+        return {"serviceable": True, "items": items, "match": resolved}
 
     def check(self, lat, lon, query, pincode=None):
-        """Return {serviceable, items:[{name,variant,brand,price,mrp,inStock,eta,merchant_id,pinServiceable}]}."""
+        """Return {serviceable, items:[...], match:{...,pinAvailable}} (match is the
+        query's best variant with its per-pincode TMS availability resolved)."""
         with self._lock:
             try:
                 return self._run(self._query(query, pincode))
@@ -241,31 +297,65 @@ class Croma:
 client = Croma()
 
 
+def _ranked_variants(query, items, best):
+    """Variants of the queried model to probe for per-pincode availability.
+
+    Returns the best match first, then the other search items that also match
+    every query token (same accessory-aware filter best_match uses), with
+    nationally in-stock ones prioritised so we most quickly find a deliverable
+    variant. Keeps the extra TMS probes focused on the right model.
+    """
+    q_tokens = [t for t in bk._norm(query).split() if t]
+    query_is_accessory = any(t in bk.ACCESSORY_WORDS for t in q_tokens)
+
+    def matches(p):
+        hay = set(bk._norm(
+            (p.get("name", "") or "") + " " + (p.get("variant", "") or "") + " "
+            + (p.get("brand", "") or "")).split())
+        if not all(t in hay for t in q_tokens):
+            return False
+        if not query_is_accessory and (hay & bk.ACCESSORY_WORDS):
+            return False
+        return True
+
+    others = [p for p in items
+              if p is not best and p.get("merchant_id") and matches(p)]
+    # Try smaller-storage variants first (keep results on the base capacity the
+    # user expects, e.g. 128GB colours) and in-stock ones ahead of the rest.
+    others.sort(key=lambda p: (bk._capacity_gb(p), 0 if p.get("inStock") else 1))
+    ranked = ([best] if best and best.get("merchant_id") else []) + others
+    return ranked
+
+
 def match_row(query, result):
     """Normalize a check() result into a row like the other platforms."""
     if result.get("serviceable") is None:
         return {"status": "error", "detail": result.get("error", "")}
-    items = result.get("items", [])
-    m = bk.best_match(query, items)
+    # Prefer the variant _query already resolved (carries the per-pincode TMS
+    # verdict); fall back to a fresh best_match for callers that didn't pass one.
+    m = result.get("match") or bk.best_match(query, result.get("items", []))
     if not m:
         return {"status": "not_found"}
-    # Deliverable to this pincode? (None == couldn't resolve -> fall back to
-    # national stock so we never wrongly hide a real listing.)
-    pin_svc = m.get("pinServiceable")
-    if pin_svc is False:
-        return {
-            "status": "not_serviceable", "available": "no",
-            "name": m.get("name"), "variant": m.get("variant", ""), "brand": m.get("brand", ""),
-            "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
-            "eta": "Not deliverable to this pincode",
-            "merchant_id": m.get("merchant_id", ""),
-        }
+
+    # Real per-pincode availability from the TMS promise (see SERVICEABLE_JS):
+    #   True  -> deliverable & in stock at this pincode,
+    #   False -> listed but not available for this pincode,
+    #   None  -> TMS errored, so fall back to the national stockFlag rather than
+    #            wrongly hiding a real listing.
+    pin_avail = m.get("pinAvailable")
+    if pin_avail is None:
+        available = bool(m.get("inStock"))
+        eta = m.get("eta") or ""
+    else:
+        available = bool(pin_avail)
+        eta = (m.get("eta") or "") if available else "Not available for this pincode"
+
     return {
-        "status": "available" if m.get("inStock") else "out_of_stock",
-        "available": "yes" if m.get("inStock") else "no",
+        "status": "available" if available else "out_of_stock",
+        "available": "yes" if available else "no",
         "name": m.get("name"), "variant": m.get("variant", ""), "brand": m.get("brand", ""),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
-        "eta": m.get("eta") or "", "merchant_id": m.get("merchant_id", ""),
+        "eta": eta, "merchant_id": m.get("merchant_id", ""),
     }
 
 
