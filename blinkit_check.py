@@ -240,22 +240,49 @@ def _norm(s):
     return re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
 
 
-# Words that indicate an accessory rather than the actual device. When the
-# query itself is not about an accessory, candidates containing these are
-# demoted so "iphone 17" matches the phone, not a "iphone 17 cover".
+def _capacity_gb(product):
+    """Storage capacity of a product in GB (TB -> *1024).
+
+    Used to prefer the base (smallest-storage) variant when a query doesn't pin a
+    capacity, e.g. "iphone 17" should surface the 128GB model, not 512GB/1TB.
+    Returns the largest capacity found (so a laptop's SSD wins over its RAM) and
+    +inf when none is present, so capacity-less items never outrank real ones.
+    """
+    text = _norm(product.get("name", "") + " " + product.get("variant", ""))
+    vals = []
+    for num, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(tb|gb)\b", text):
+        try:
+            vals.append(float(num) * (1024.0 if unit == "tb" else 1.0))
+        except ValueError:
+            pass
+    return max(vals) if vals else float("inf")
+
+
+# Words that indicate an accessory or an add-on service rather than the actual
+# device. When the query itself is not about one of these, candidates containing
+# them are dropped so "iphone 17" matches the phone, not an "iphone 17 cover" or
+# an "AppleCare+ for iPhone 17" protection plan.
 ACCESSORY_WORDS = {
     "cover", "case", "guard", "protector", "tempered", "glass", "screen",
     "charger", "cable", "adapter", "skin", "pouch", "holder", "stand",
     "mount", "ring", "strap", "lens", "grip", "sleeve", "wallet",
+    # add-on services / protection plans (e.g. Apple's "AppleCare+ for iPhone 17")
+    "applecare", "care", "warranty", "protection", "plan", "insurance",
+    "coverage", "subscription",
 }
 
 
 def best_match(query, products):
     """Pick the product card whose name best matches the query tokens.
 
-    Scoring rewards covering all query tokens and penalizes extra tokens in the
+    Matching rewards covering all query tokens and penalizes extra tokens in the
     candidate name (so the bare device beats accessories/bundles). Accessory
-    products are demoted unless the query is itself about an accessory.
+    products are demoted unless the query is itself about an accessory. Among
+    otherwise-equal matches we prefer the base (smallest-storage) variant so a
+    query like "iphone 17" surfaces the 128GB model rather than 512GB/1TB, then
+    an in-stock variant, then the cheaper one. If the query pins a capacity
+    (e.g. "iphone 17 256gb") the token filter already keeps only that capacity,
+    so the base-variant preference is a no-op there.
     """
     q_tokens = [t for t in _norm(query).split() if t]
     if not q_tokens:
@@ -265,7 +292,7 @@ def best_match(query, products):
     # iphone). Numbers matter as much as words for specific SKUs.
     query_is_accessory = any(t in ACCESSORY_WORDS for t in q_tokens)
 
-    best, best_score = None, -1.0
+    best, best_key = None, None
     for p in products:
         name_tokens = _norm(p.get("name", "")).split()
         hay = set(_norm(p.get("name", "") + " " + p.get("variant", "") + " "
@@ -276,12 +303,23 @@ def best_match(query, products):
         # phone, never a cover / screen protector / charger.
         if not query_is_accessory and (hay & ACCESSORY_WORDS):
             continue
-        # fewer extra words in the candidate name -> closer match. Prefer an
-        # in-stock variant when scores are otherwise equal.
+        # fewer extra words in the candidate name -> closer match.
         precision = len(q_tokens) / max(len(set(name_tokens)), 1)
-        score = precision + (0.15 if p.get("available") or p.get("inStock") else 0)
-        if score > best_score:
-            best, best_score = p, score
+        in_stock = bool(p.get("available") or p.get("inStock"))
+        price = p.get("price")
+        price_key = price if isinstance(price, (int, float)) else float("inf")
+        # A real product/SKU (flagged is_device by callers that separate the
+        # actual device from add-ons) always beats a bundle/plan whose short
+        # name would otherwise score a higher precision -- e.g. so "iphone air"
+        # picks the phone, not an "iPhone Air MagSafe Battery". Absent the flag
+        # (most platforms) this term is constant and has no effect.
+        device_rank = 0 if p.get("is_device") else 1
+        # Lowest tuple wins: real device first, then closest match, then the base
+        # (smallest storage) variant, then in stock, then cheapest.
+        key = (device_rank, -precision, _capacity_gb(p),
+               0 if in_stock else 1, price_key)
+        if best_key is None or key < best_key:
+            best, best_key = p, key
     return best
 
 

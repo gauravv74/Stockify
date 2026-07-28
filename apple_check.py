@@ -51,7 +51,7 @@ SEARCH_JS = r"""
 async (q) => {
   const r = await fetch('/in/search/' + encodeURIComponent(q) + '?tab=accessories',
                         {headers: {accept: 'text/html'}});
-  if (!r.ok) return {status: r.status, items: []};
+  if (!r.ok) return {status: r.status, items: [], links: []};
   const t = await r.text();
   const items = []; const seen = new Set();
   const re = /"title":"((?:[^"\\]|\\.)*?)","link":\{[\s\S]*?"partNumber":"([^"]+)"[\s\S]*?"priceCurrent":"([^"]*)"/g;
@@ -66,6 +66,48 @@ async (q) => {
     if (seen.has(part)) continue; seen.add(part);
     items.push({name, partNumber: part, price});
     if (items.length >= 20) break;
+  }
+  // A device (iPhone/iPad/Mac/Watch) is a configurable buy-page product, not a
+  // part-number SKU in the accessories tab above. The default (all) search page
+  // does list buy-<family> links, so fetch it once to surface them and let the
+  // caller pull the real device variants from the matching buy page.
+  let links = [];
+  try {
+    const r2 = await fetch('/in/search/' + encodeURIComponent(q),
+                           {headers: {accept: 'text/html'}});
+    if (r2.ok) {
+      const t2 = await r2.text();
+      links = [...new Set(
+        [...t2.matchAll(/href="([^"]*\/shop\/buy-[^"?#]*)"/g)].map(x => x[1]))];
+    }
+  } catch (e) { /* keep accessory results even if link discovery fails */ }
+  return {status: 200, items, links};
+}
+"""
+
+# Real device variants from a buy-<family> page (e.g. /in/shop/buy-iphone/
+# iphone-17). The page embeds a clean products array
+#   "products":[{"sku":"MG6L4","partNumber":"MG6L4HN/A",
+#                "price":{"fullPrice":82900.00},"category":"iphone",
+#                "name":"iPhone 17 256GB Mist Blue"}, ...]
+# which gives the actual purchasable phone SKUs (with storage + colour + price),
+# so a query like "iphone 17" resolves to the phone, not an AppleCare+ plan or a
+# case that merely mentions "iPhone 17".
+DEVICE_JS = r"""
+async (url) => {
+  const r = await fetch(url, {headers: {accept: 'text/html'}});
+  if (!r.ok) return {status: r.status, items: []};
+  const t = await r.text();
+  const items = []; const seen = new Set();
+  const re = /"partNumber":"([^"]+)","price":\{"fullPrice":([0-9.]+)\},"category":"[^"]*","name":"([^"]+)"/g;
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    const part = m[1];
+    if (seen.has(part)) continue; seen.add(part);
+    const name = m[3].replace(/\u00a0/g, ' ').replace(/\\(.)/g, '$1')
+                     .replace(/\s+/g, ' ').trim();
+    items.push({name, partNumber: part, price: Number(m[2])});
+    if (items.length >= 60) break;
   }
   return {status: 200, items};
 }
@@ -165,6 +207,18 @@ class Apple:
         await self._ensure()
         res = await self._page.evaluate(SEARCH_JS, query)
         items = res.get("items") or []
+        # For a device query, pull the real phone/tablet/Mac variants from the
+        # matching buy-<family> page and put them first, so best_match picks the
+        # actual device over accessories / AppleCare+ (which is all the store
+        # search returns for e.g. "iphone 17").
+        buy_url = _pick_buy_url(query, res.get("links") or [])
+        if buy_url:
+            d = await self._page.evaluate(DEVICE_JS, buy_url)
+            dev_items = d.get("items") or []
+            for it in dev_items:
+                it["is_device"] = True     # a real buy-page SKU, not an add-on
+            if dev_items:
+                items = dev_items + items
         for it in items:
             it["variant"] = ""
             it["brand"] = "Apple"
@@ -213,6 +267,33 @@ class Apple:
 
 
 client = Apple()
+
+
+def _pick_buy_url(query, links):
+    """Choose the buy-<family> page that best matches a device query.
+
+    Compares the query against each link's final path segment (the model slug,
+    e.g. "iphone-17"), keeping only slugs that are compatible with the query --
+    one token set a subset of the other -- so "iphone 17" matches iphone-17 (and
+    not iphone-16), while "iphone 17 pro max" still matches the iphone-17-pro
+    page (which lists both Pro and Pro Max SKUs). Among those, the link sharing
+    the most tokens wins, then the tightest fit, so "iphone 17" -> iphone-17
+    rather than iphone-17-pro. Returns None when no buy link is compatible (e.g.
+    a pure accessory search), leaving the original store-search behaviour intact.
+    """
+    q = set(t for t in bk._norm(query).split() if t)
+    if not q:
+        return None
+    best, best_key = None, None
+    for url in links:
+        seg = url.rstrip("/").split("/")[-1]
+        toks = set(bk._norm(seg).split())
+        if not toks or not (q <= toks or toks <= q):
+            continue
+        key = (-len(q & toks), len(toks ^ q), len(seg))
+        if best_key is None or key < best_key:
+            best, best_key = url, key
+    return best
 
 
 def match_row(query, result):
