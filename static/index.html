@@ -1071,6 +1071,10 @@ const JOB_LS_KEY = 'stockly_active_job';
 // ── Distance ordering state (sort pincodes nearest-first) ───────────────────
 let sortMode = 'stock';         // 'stock' | 'distance'
 let refLat = null, refLon = null, refLabel = '';
+// Screen Wake Lock — held while a run is active so the phone doesn't sleep /
+// suspend the tab mid-search (the server keeps going regardless, but this keeps
+// the UI live and the device awake so results keep flowing on screen).
+let wakeLock = null;
 let locMode = 'cities'; // cities | pincodes | both
 let citiesCatalog = [];
 let selectedCities = new Set();
@@ -1930,6 +1934,20 @@ $('refPin').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); setRefFromPin(); }
 });
 
+async function acquireWakeLock() {
+  try {
+    if ('wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      // The browser auto-releases on tab-hide; drop our handle so we re-acquire.
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch (_) { /* unsupported or denied — the server run continues regardless */ }
+}
+function releaseWakeLock() {
+  try { if (wakeLock) { wakeLock.release(); } } catch (_) {}
+  wakeLock = null;
+}
+
 function setRunning(on) {
   $('runBtn').style.display = on ? 'none' : 'flex';
   $('stopBtn').style.display = on ? 'flex' : 'none';
@@ -1940,6 +1958,7 @@ function setRunning(on) {
   $('clearCities').disabled = on;
   $('pincodes').disabled = on;
   $('findProductsBtn').disabled = on || platform === 'all';
+  if (on) acquireWakeLock(); else releaseWakeLock();
 }
 function setStatus(html) { $('statusText').innerHTML = html; }
 
@@ -1951,6 +1970,14 @@ function buildPayload() {
   }
   if (locMode === 'pincodes' || locMode === 'both') {
     payload.pincodes = $('pincodes').value.trim();
+  }
+  // Ask the server to check nearest pincodes first when a distance reference
+  // (your location or a chosen pincode) is set, so relevant results stream in
+  // first instead of arriving in city order.
+  if (sortMode === 'distance' && refLat != null && refLon != null) {
+    payload.order_by = 'distance';
+    payload.ref_lat = refLat;
+    payload.ref_lon = refLon;
   }
   return payload;
 }
@@ -2116,12 +2143,20 @@ async function resumeJobIfAny() {
   }
 }
 
-// Coming back to a foregrounded tab: catch up immediately instead of waiting.
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden || !activeJobId) return;
+// Coming back to a foregrounded tab / screen: re-acquire the wake lock (the
+// browser drops it when hidden) and catch up on results immediately instead of
+// waiting for the next poll tick. Wired to every "we're visible again" signal
+// so it's robust across phone unlock, app switch, and bfcache restore.
+function catchUpNow() {
+  if (document.hidden) return;
+  if (activeJobId) acquireWakeLock();
+  if (!activeJobId) return;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   pollJob();
-});
+}
+document.addEventListener('visibilitychange', catchUpNow);
+window.addEventListener('pageshow', catchUpNow);
+window.addEventListener('focus', catchUpNow);
 
 function exportCSV() {
   const cols = ['platform','pincode','location','distance_km','product','status','available','name','variant','brand','price','mrp','inventory','eta','merchant_id','lat','lon'];

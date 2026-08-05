@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -462,17 +463,56 @@ def _platform_items(platform, session, q, lat, lon, pin, limit=40):
     return serviceable, options
 
 
-def _run_check_job(job_id, pincodes, products, platforms):
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance in km between two lat/lon points."""
+    r = 6371.0
+    p = math.pi / 180.0
+    dlat = (lat2 - lat1) * p
+    dlon = (lon2 - lon1) * p
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(lat1 * p) * math.cos(lat2 * p) * math.sin(dlon / 2) ** 2)
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _order_pincodes_by_distance(pincodes, cache, ref_lat, ref_lon):
+    """Return pincodes ordered nearest-first from (ref_lat, ref_lon).
+
+    Uses only already-cached geocodes (no blocking network calls), so the run
+    starts immediately. Pincodes without a cached coordinate keep their original
+    relative order and go last; they're geocoded normally when processed, and
+    become correctly ordered on the next run once the cache is warm.
+    """
+    def sort_key(i_pin):
+        i, pin = i_pin
+        g = cache.get(pin) or {}
+        la, lo = g.get("lat"), g.get("lon")
+        try:
+            if la not in (None, "") and lo not in (None, ""):
+                return (0, _haversine_km(ref_lat, ref_lon, float(la), float(lo)), i)
+        except (TypeError, ValueError):
+            pass
+        return (1, 0.0, i)
+
+    return [pin for _, pin in sorted(enumerate(pincodes), key=sort_key)]
+
+
+def _run_check_job(job_id, pincodes, products, platforms,
+                   ref_lat=None, ref_lon=None, order_by=None):
     """Execute a search run in the background, persisting each result row.
 
     Runs in a daemon thread decoupled from any HTTP request, so the run keeps
     going even if the user backgrounds the tab, locks the phone, or reloads —
     the browser just re-polls ``/api/check/poll`` from its cursor. Cancellation
     is cooperative: we check the job's cancel flag between checks.
+
+    When ``order_by == 'distance'`` and a reference point is given, pincodes are
+    processed nearest-first so the most relevant results stream in first.
     """
     try:
         cache = bk.load_cache()
         session = cffi_requests.Session()
+        if order_by == "distance" and ref_lat is not None and ref_lon is not None:
+            pincodes = _order_pincodes_by_distance(pincodes, cache, ref_lat, ref_lon)
         idx = 0
         canceled = False
         for pin in pincodes:
@@ -543,6 +583,15 @@ def check_start():
     platforms = resolve_platforms(payload.get("platform"), allowed)
     multi = len(platforms) > 1
 
+    # Optional: check nearest pincodes first, relative to a reference point
+    # (the user's current location or a chosen pincode).
+    order_by = (str(payload.get("order_by") or "").strip().lower()) or None
+    try:
+        ref_lat = float(payload["ref_lat"]) if payload.get("ref_lat") not in (None, "") else None
+        ref_lon = float(payload["ref_lon"]) if payload.get("ref_lon") not in (None, "") else None
+    except (TypeError, ValueError):
+        ref_lat = ref_lon = None
+
     if not platforms:
         return jsonify({
             "error": "No platform access. Ask an admin to enable Blinkit / Instamart / Zepto / BigBasket / Flipkart Minutes / JioMart / Apple / Croma for your account."
@@ -572,7 +621,10 @@ def check_start():
     }
     job_id = jobs.create_job(user.get("id"), meta, total)
     t = threading.Thread(
-        target=_run_check_job, args=(job_id, pincodes, products, platforms), daemon=True)
+        target=_run_check_job,
+        args=(job_id, pincodes, products, platforms),
+        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by},
+        daemon=True)
     t.start()
 
     return jsonify({"job_id": job_id, "meta": meta})
