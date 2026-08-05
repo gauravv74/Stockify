@@ -23,6 +23,49 @@ services:
     # ports:
     #   - "5001:5001"
 
+  # Stock watcher: polls every active watch on a fixed cadence and fires the
+  # WhatsApp alerts. Separate process so the Playwright/Chromium session lives
+  # in exactly one place (never forked across gunicorn workers). Shares the same
+  # SQLite DB volume as the web app to coordinate.
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "worker.py"]
+    env_file:
+      - .env
+    environment:
+      STOCKLY_ENV: production
+      STOCKLY_DATA_DIR: /app/data
+      # Reach the WhatsApp bridge by its compose service name.
+      STOCKLY_WA_BRIDGE_URL: http://wa-bridge:3001
+    volumes:
+      - stockly_data:/app/data
+      - ./cities.json:/app/cities.json:ro
+    shm_size: "1gb"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - stockly
+      - wa-bridge
+
+  # Self-hosted WhatsApp sender (whatsapp-web.js). Scan the QR once on first
+  # boot: `docker compose logs -f wa-bridge` shows it. The linked session is
+  # persisted in the wa_bridge_auth volume, so it survives restarts.
+  wa-bridge:
+    build: ./wa-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WA_BRIDGE_HOST: 0.0.0.0
+      WA_BRIDGE_PORT: "3001"
+      WA_AUTH_DIR: /data/.wwebjs_auth
+    volumes:
+      - wa_bridge_auth:/data
+    shm_size: "1gb"
+    expose:
+      - "3001"
+
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -37,3 +80,4 @@ services:
 
 volumes:
   stockly_data:
+  wa_bridge_auth:

@@ -1,0 +1,7 @@
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+npm-debug.log*
+# Runtime/session artifacts — never commit (WhatsApp login QR is sensitive)
+qr.png
+*.log

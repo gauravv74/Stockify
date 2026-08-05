@@ -10,13 +10,18 @@ import re
 import time
 from datetime import timedelta
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from curl_cffi import requests as cffi_requests
 from werkzeug.middleware.proxy_fix import ProxyFix
+
+import threading
 
 import auth
 import blinkit_check as bk
 import config
+import jobs
+import watches
+import whatsapp
 
 logging.basicConfig(
     level=logging.INFO if config.IS_PROD else logging.DEBUG,
@@ -42,6 +47,8 @@ if config.TRUST_PROXY:
 
 _created_default_admin = False
 _, _created_default_admin = auth.ensure_users_file()
+watches.init_db()
+jobs.init_db()
 if _created_default_admin:
     log.warning(
         "Default admin created (username=%s). Change password immediately.",
@@ -268,6 +275,28 @@ def api_cities():
     return jsonify({"cities": cities})
 
 
+@app.route("/api/geocode")
+@auth.login_required
+def api_geocode():
+    """Resolve a pincode to lat/lon/place so the UI can use it as a distance
+    reference ("order pincodes nearest to <this location>"). Reuses the shared
+    geocode cache, so repeated lookups are free."""
+    pin = (request.args.get("pincode") or "").strip()
+    if not re.fullmatch(r"\d{6}", pin):
+        return jsonify({"error": "Enter a valid 6-digit pincode."}), 400
+    session = cffi_requests.Session()
+    cache = bk.load_cache()
+    geo = bk.geocode_pincode(pin, cache, session)
+    if not geo.get("lat"):
+        return jsonify({"error": f"Couldn't locate pincode {pin}."}), 404
+    return jsonify({
+        "pincode": pin,
+        "lat": geo.get("lat"),
+        "lon": geo.get("lon"),
+        "place": geo.get("place"),
+    })
+
+
 def _blank_row(idx, pin, place, lat, lon, product, platform):
     return {
         "type": "result", "index": idx, "pincode": pin, "platform": platform,
@@ -356,9 +385,141 @@ def _check_one(platform, session, q, lat, lon, pin):
     return _check_blinkit(session, q, lat, lon)
 
 
-@app.route("/api/check", methods=["POST"])
+# ---------------------------------------------------------------------------
+# Product picker — return the raw list of products a platform surfaces for a
+# query at one reference location, so the user can pick the exact SKU to track
+# instead of relying purely on free-text fuzzy matching.
+# ---------------------------------------------------------------------------
+def _platform_raw_check(platform, q, lat, lon, pin):
+    """Call a browser-backed platform client and return its raw check() dict."""
+    if platform == "instamart":
+        import swiggy_check as sw
+        return sw.client.check(float(lat), float(lon), q)
+    if platform == "zepto":
+        import zepto_check as zp
+        return zp.client.check(float(lat), float(lon), q)
+    if platform == "bigbasket":
+        import bigbasket_check as bb
+        return bb.client.check(str(lat), str(lon), q, pin)
+    if platform == "flipkart":
+        import flipkart_check as fk
+        return fk.client.check(float(lat), float(lon), q)
+    if platform == "jiomart":
+        import jiomart_check as jm
+        return jm.client.check(float(lat), float(lon), q, pin)
+    if platform == "apple":
+        import apple_check as ap
+        return ap.client.check(float(lat), float(lon), q, pin)
+    if platform == "croma":
+        import croma_check as cr
+        return cr.client.check(float(lat), float(lon), q, pin)
+    return {"serviceable": None, "items": []}
+
+
+def _norm_option(p):
+    """Normalize a platform product card into a compact, UI-friendly option."""
+    in_stock = p.get("inStock")
+    if in_stock is None:
+        in_stock = p.get("available")
+    return {
+        "name": (p.get("name") or "").strip(),
+        "variant": (p.get("variant") or "").strip(),
+        "brand": (p.get("brand") or "").strip(),
+        "price": p.get("price"),
+        "mrp": p.get("mrp"),
+        "inStock": bool(in_stock),
+        "eta": (p.get("eta") or "").strip(),
+    }
+
+
+def _platform_items(platform, session, q, lat, lon, pin, limit=40):
+    """Return (serviceable, options) for a query on one platform at a location.
+
+    `serviceable` is True/False/None (None == transient/couldn't reach). Options
+    are de-duplicated by name+variant and capped at `limit`.
+    """
+    if platform == "blinkit":
+        serviceable, prods, _code = bk.blinkit_search(session, q, lat, lon)
+        time.sleep(bk.REQUEST_PAUSE)
+        raw = prods if serviceable else []
+    else:
+        res = _platform_raw_check(platform, q, lat, lon, pin)
+        serviceable = res.get("serviceable")
+        raw = res.get("items") or []
+
+    seen, options = set(), []
+    for p in raw:
+        opt = _norm_option(p)
+        if not opt["name"]:
+            continue
+        key = (opt["name"].lower(), opt["variant"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        options.append(opt)
+        if len(options) >= limit:
+            break
+    return serviceable, options
+
+
+def _run_check_job(job_id, pincodes, products, platforms):
+    """Execute a search run in the background, persisting each result row.
+
+    Runs in a daemon thread decoupled from any HTTP request, so the run keeps
+    going even if the user backgrounds the tab, locks the phone, or reloads —
+    the browser just re-polls ``/api/check/poll`` from its cursor. Cancellation
+    is cooperative: we check the job's cancel flag between checks.
+    """
+    try:
+        cache = bk.load_cache()
+        session = cffi_requests.Session()
+        idx = 0
+        canceled = False
+        for pin in pincodes:
+            if jobs.is_canceled(job_id):
+                canceled = True
+                break
+            geo = bk.geocode_pincode(pin, cache, session)
+            lat, lon, place = geo.get("lat"), geo.get("lon"), geo.get("place")
+
+            if not lat:
+                for q in products:
+                    for plat in platforms:
+                        idx += 1
+                        row = _blank_row(idx, pin, "", None, None, q, plat)
+                        row["status"] = "geocode_failed"
+                        jobs.add_event(job_id, row)
+                continue
+
+            for q in products:
+                if jobs.is_canceled(job_id):
+                    canceled = True
+                    break
+                for plat in platforms:
+                    idx += 1
+                    row = _blank_row(idx, pin, place, lat, lon, q, plat)
+                    try:
+                        row.update(_check_one(plat, session, q, lat, lon, pin))
+                    except Exception as e:
+                        log.exception("check failed pin=%s plat=%s q=%s", pin, plat, q)
+                        row["status"] = "error"
+                        row["detail"] = str(e)[:200]
+                    jobs.add_event(job_id, row)
+            if canceled:
+                break
+
+        jobs.set_status(job_id, "canceled" if (canceled or jobs.is_canceled(job_id)) else "done")
+    except Exception as e:
+        log.exception("search job %s crashed", job_id)
+        jobs.set_status(job_id, "error", detail=str(e)[:200])
+
+
+@app.route("/api/check/start", methods=["POST"])
 @auth.login_required
-def check():
+def check_start():
+    """Kick off a background search run and return its job id + meta. The
+    browser then polls ``/api/check/poll`` for results, so the run survives the
+    tab being backgrounded / suspended / reloaded."""
     user = auth.current_user()
     allowed = auth.allowed_platforms(user)
     payload = request.get_json(force=True, silent=True) or {}
@@ -386,6 +547,10 @@ def check():
         return jsonify({
             "error": "No platform access. Ask an admin to enable Blinkit / Instamart / Zepto / BigBasket / Flipkart Minutes / JioMart / Apple / Croma for your account."
         }), 403
+    if not pincodes:
+        return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
+
+    total = len(pincodes) * len(products) * len(platforms)
 
     # Audit the request so admins can see what users searched.
     auth.log_search(
@@ -394,60 +559,235 @@ def check():
         products,
         [c["name"] for c in selected_cities],
         len(pincodes),
-        len(pincodes) * len(products) * len(platforms),
+        total,
     )
 
-    def generate():
-        if not pincodes:
-            yield json.dumps({
-                "type": "error",
-                "message": "Select a city and/or enter at least one pincode.",
-            }) + "\n"
-            yield json.dumps({"type": "done", "total": 0}) + "\n"
-            return
+    meta = {
+        "total": total,
+        "platform": "all" if multi else platforms[0],
+        "platforms": platforms,
+        "pincodes": len(pincodes),
+        "products": products,
+        "cities": selected_cities,
+    }
+    job_id = jobs.create_job(user.get("id"), meta, total)
+    t = threading.Thread(
+        target=_run_check_job, args=(job_id, pincodes, products, platforms), daemon=True)
+    t.start()
 
-        cache = bk.load_cache()
-        session = cffi_requests.Session()
-        total = len(pincodes) * len(products) * len(platforms)
-        yield json.dumps({
-            "type": "meta",
-            "total": total,
-            "platform": "all" if multi else platforms[0],
-            "platforms": platforms,
-            "pincodes": len(pincodes),
-            "products": products,
-            "cities": selected_cities,
-        }) + "\n"
+    return jsonify({"job_id": job_id, "meta": meta})
 
-        idx = 0
-        for pin in pincodes:
-            geo = bk.geocode_pincode(pin, cache, session)
-            lat, lon, place = geo.get("lat"), geo.get("lon"), geo.get("place")
 
-            if not lat:
-                for q in products:
-                    for plat in platforms:
-                        idx += 1
-                        row = _blank_row(idx, pin, "", None, None, q, plat)
-                        row["status"] = "geocode_failed"
-                        yield json.dumps(row) + "\n"
-                continue
+@app.route("/api/check/poll")
+@auth.login_required
+def check_poll():
+    """Return any result rows past ``cursor`` plus the run's current status, so
+    the browser can pick up exactly where it left off after being away."""
+    user = auth.current_user()
+    job_id = (request.args.get("job_id") or "").strip()
+    try:
+        cursor = int(request.args.get("cursor", 0))
+    except (TypeError, ValueError):
+        cursor = 0
 
-            for q in products:
-                for plat in platforms:
-                    idx += 1
-                    row = _blank_row(idx, pin, place, lat, lon, q, plat)
-                    try:
-                        row.update(_check_one(plat, session, q, lat, lon, pin))
-                    except Exception as e:
-                        log.exception("check failed pin=%s plat=%s q=%s", pin, plat, q)
-                        row["status"] = "error"
-                        row["detail"] = str(e)[:200]
-                    yield json.dumps(row) + "\n"
+    job = jobs.get_job(job_id, user_id=user.get("id"))
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
 
-        yield json.dumps({"type": "done", "total": total}) + "\n"
+    events = jobs.get_events(job_id, cursor)
+    next_cursor = events[-1]["seq"] if events else cursor
+    return jsonify({
+        "status": job["status"],           # running | done | canceled | error
+        "total": job["total"],
+        "meta": job["meta"],
+        "detail": job.get("detail"),
+        "events": events,
+        "cursor": next_cursor,
+    })
 
-    return Response(generate(), mimetype="application/x-ndjson")
+
+@app.route("/api/check/cancel", methods=["POST"])
+@auth.login_required
+def check_cancel():
+    user = auth.current_user()
+    payload = request.get_json(force=True, silent=True) or {}
+    job_id = (payload.get("job_id") or "").strip()
+    ok = jobs.request_cancel(job_id, user_id=user.get("id"))
+    if not ok:
+        return jsonify({"error": "Job not found."}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/product-options", methods=["POST"])
+@auth.login_required
+def api_product_options():
+    """Browse the products a single platform surfaces for a free-text query at
+    one reference location, so the user can pick the exact SKU to check/track."""
+    user = auth.current_user()
+    allowed = auth.allowed_platforms(user)
+    payload = request.get_json(force=True, silent=True) or {}
+
+    query = (payload.get("query") or "").strip()
+    if not query:
+        # Fall back to the first free-text product if a bare query wasn't sent.
+        query = (parse_products(payload.get("products", [])) or [""])[0]
+    if not query:
+        return jsonify({"error": "Type a product to search."}), 400
+
+    # Same platform + location access enforcement as /api/check.
+    allowed_city_ids = auth.allowed_cities(user)
+    if allowed_city_ids is not None:
+        req_cities = payload.get("cities") or []
+        if isinstance(req_cities, str):
+            req_cities = [c.strip() for c in re.split(r"[\n,]+", req_cities) if c.strip()]
+        payload["cities"] = [
+            c for c in req_cities
+            if str(c).strip().lower().replace(" ", "-") in allowed_city_ids
+        ]
+    if not auth.can_use_pincodes(user):
+        payload["pincodes"] = []
+
+    platforms = resolve_platforms(payload.get("platform"), allowed)
+    if not platforms:
+        return jsonify({"error": "No access to the requested platform."}), 403
+    if len(platforms) != 1:
+        return jsonify({"error": "Pick a single platform to browse products."}), 400
+    platform = platforms[0]
+
+    pincodes, _selected = resolve_pincodes(payload)
+    if not pincodes:
+        return jsonify({"error": "Select a city or enter a pincode first."}), 400
+    pin = pincodes[0]
+
+    session = cffi_requests.Session()
+    cache = bk.load_cache()
+    geo = bk.geocode_pincode(pin, cache, session)
+    lat, lon, place = geo.get("lat"), geo.get("lon"), geo.get("place")
+    if not lat or not lon:
+        return jsonify({"error": f"Couldn't locate pincode {pin}."}), 400
+
+    try:
+        serviceable, options = _platform_items(platform, session, query, lat, lon, pin)
+    except Exception as e:
+        log.exception("product-options failed plat=%s q=%s pin=%s", platform, query, pin)
+        return jsonify({"error": str(e)[:200]}), 502
+
+    if serviceable is False:
+        return jsonify({
+            "options": [], "serviceable": False, "platform": platform,
+            "location": {"pincode": pin, "place": place},
+        })
+    if serviceable is None:
+        return jsonify({
+            "error": "Couldn't reach the platform right now — please retry.",
+            "platform": platform, "location": {"pincode": pin, "place": place},
+        }), 502
+    return jsonify({
+        "options": options, "serviceable": True, "platform": platform,
+        "query": query, "location": {"pincode": pin, "place": place},
+    })
+
+
+# ---------------------------------------------------------------------------
+# Stock watches — a user registers products to monitor; worker.py polls them
+# every STOCKLY_WATCH_INTERVAL_MIN minutes and WhatsApps on any change.
+# ---------------------------------------------------------------------------
+@app.route("/api/watches", methods=["GET"])
+@auth.login_required
+def api_list_watches():
+    user = auth.current_user()
+    # Admins see every watch; regular users see only their own.
+    uid = None if user.get("role") == "admin" else user["id"]
+    return jsonify({
+        "watches": watches.list_watches(user_id=uid),
+        "interval_min": config.WATCH_INTERVAL_MIN,
+        "whatsapp": {
+            "provider": config.WHATSAPP_PROVIDER,
+            "configured": whatsapp.is_configured(),
+            "notify_on": config.WATCH_NOTIFY_ON,
+        },
+    })
+
+
+@app.route("/api/watches", methods=["POST"])
+@auth.login_required
+def api_create_watches():
+    """Register watches for the cartesian product of products x pincodes x
+    platforms, honouring the caller's platform + location access."""
+    user = auth.current_user()
+    allowed = auth.allowed_platforms(user)
+    payload = request.get_json(force=True, silent=True) or {}
+
+    # Same access enforcement as /api/check.
+    allowed_city_ids = auth.allowed_cities(user)
+    if allowed_city_ids is not None:
+        req_cities = payload.get("cities") or []
+        if isinstance(req_cities, str):
+            req_cities = [c.strip() for c in re.split(r"[\n,]+", req_cities) if c.strip()]
+        payload["cities"] = [
+            c for c in req_cities
+            if str(c).strip().lower().replace(" ", "-") in allowed_city_ids
+        ]
+    if not auth.can_use_pincodes(user):
+        payload["pincodes"] = []
+
+    pincodes, _selected = resolve_pincodes(payload)
+    products = parse_products(payload.get("products", []))
+    platforms = resolve_platforms(payload.get("platform"), allowed)
+    notify_to = (payload.get("notify_to") or "").strip() or None
+
+    if not platforms:
+        return jsonify({"error": "No platform access for the requested platform."}), 403
+    if not products:
+        return jsonify({"error": "Enter at least one product."}), 400
+    if not pincodes:
+        return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
+
+    created, errors = [], []
+    for pin in pincodes:
+        for q in products:
+            for plat in platforms:
+                w, err = watches.add_watch(user, plat, q, pin, notify_to=notify_to)
+                if w:
+                    created.append(w)
+                elif err:
+                    errors.append({"product": q, "pincode": pin, "platform": plat, "error": err})
+    return jsonify({"created": len(created), "watches": created, "errors": errors}), 201
+
+
+@app.route("/api/watches/<int:watch_id>", methods=["PATCH"])
+@auth.login_required
+def api_update_watch(watch_id):
+    user = auth.current_user()
+    uid = None if user.get("role") == "admin" else user["id"]
+    payload = request.get_json(force=True, silent=True) or {}
+    if "active" not in payload:
+        return jsonify({"error": "Nothing to update."}), 400
+    ok = watches.set_active(watch_id, bool(payload.get("active")), user_id=uid)
+    if not ok:
+        return jsonify({"error": "Watch not found."}), 404
+    return jsonify({"watch": watches.get_watch(watch_id)})
+
+
+@app.route("/api/watches/<int:watch_id>", methods=["DELETE"])
+@auth.login_required
+def api_delete_watch(watch_id):
+    user = auth.current_user()
+    uid = None if user.get("role") == "admin" else user["id"]
+    if not watches.delete_watch(watch_id, user_id=uid):
+        return jsonify({"error": "Watch not found."}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/watches/test-whatsapp", methods=["POST"])
+@auth.login_required
+def api_test_whatsapp():
+    payload = request.get_json(force=True, silent=True) or {}
+    to = (payload.get("to") or "").strip() or None
+    ok, detail = whatsapp.send(
+        "Stockly ✅ test alert — WhatsApp notifications are wired up.", to=to)
+    return jsonify({"ok": ok, "detail": detail, "provider": config.WHATSAPP_PROVIDER}), (
+        200 if ok else 502)
 
 
 if __name__ == "__main__":

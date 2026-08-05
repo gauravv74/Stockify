@@ -27,12 +27,20 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 
 STORE_JS = r"""
 async ([lat, lng]) => {
+  // Returns rich status so the caller can tell three cases apart:
+  //   * storeId present            -> serviceable
+  //   * ok JSON, no storeId        -> genuinely NOT serviceable (swiggyNotPresent)
+  //   * 202 / empty / non-JSON     -> stale WAF session, needs re-priming
   try {
     const r = await fetch(`/api/instamart/home/v2?lat=${lat}&lng=${lng}`, {headers:{accept:'application/json'}});
     const t = await r.text();
     const m = t.match(/storeId=(\d+)/);
-    return m ? m[1] : null;
-  } catch (e) { return null; }
+    let ok = false;
+    try { JSON.parse(t); ok = true; } catch (e) {}
+    // Swiggy explicitly flags out-of-coverage areas with this marker.
+    const notPresent = /swiggyNotPresent"?\s*:\s*true/.test(t);
+    return {status: r.status, storeId: m ? m[1] : null, ok, notPresent, empty: !t};
+  } catch (e) { return {status: 0, storeId: null, ok: false, notPresent: false, empty: true}; }
 }
 """
 
@@ -113,14 +121,31 @@ class SwiggyInstamart:
         self._page = await self._ctx.new_page()
         await self._prime()
 
-    async def _prime(self):
-        # Solve WAF + set instamart session cookies (sid/tid/deviceId).
-        await self._page.goto("https://www.swiggy.com/instamart",
-                              wait_until="domcontentloaded", timeout=45000)
-        await self._page.wait_for_timeout(3500)
-        await self._page.goto("https://www.swiggy.com/instamart/search?custom_back=true",
-                              wait_until="domcontentloaded", timeout=45000)
-        await self._page.wait_for_timeout(2500)
+    # A location that is always serviceable, used purely to confirm the WAF
+    # challenge has actually been solved after (re)priming.
+    PROBE_LAT, PROBE_LON = "19.0760", "72.8777"  # Mumbai
+
+    async def _prime(self, verify=True):
+        # Solve WAF + set instamart session cookies (sid/tid/deviceId). Swiggy's
+        # AWS WAF sometimes needs a few seconds (and occasionally a second pass)
+        # before the API stops returning HTTP 202 with an empty body, so we
+        # verify with a known-good probe and re-navigate if it isn't ready yet.
+        for _ in range(3):
+            await self._page.goto("https://www.swiggy.com/instamart",
+                                  wait_until="domcontentloaded", timeout=45000)
+            await self._page.wait_for_timeout(3500)
+            await self._page.goto("https://www.swiggy.com/instamart/search?custom_back=true",
+                                  wait_until="domcontentloaded", timeout=45000)
+            await self._page.wait_for_timeout(2500)
+            if not verify:
+                return True
+            # Poll the home API until it returns real JSON (challenge solved).
+            for _ in range(4):
+                info = await self._page.evaluate(STORE_JS, [self.PROBE_LAT, self.PROBE_LON])
+                if info.get("ok"):
+                    return True
+                await self._page.wait_for_timeout(1500)
+        return False
 
     async def _reset(self):
         try:
@@ -130,15 +155,64 @@ class SwiggyInstamart:
             pass
         self._pw = self._browser = self._ctx = self._page = None
 
+    async def _store_lookup(self, lat, lon):
+        """Resolve a storeId, re-priming once if the WAF session looks stale.
+
+        Returns (storeId|None, definitive) where `definitive` is True only when we
+        trust the answer: a storeId was found, or Swiggy explicitly reported the
+        area as out of coverage. A stale WAF session (202 / empty / non-JSON) is
+        NOT definitive, so the caller can surface an error instead of a bogus
+        "Unserviceable".
+        """
+        # Try a few times, re-priming (verified) between attempts. Because
+        # _prime() confirms the session is live before returning, a storeId or
+        # the explicit not-present marker after a fresh prime is trustworthy.
+        for attempt in range(3):
+            info = await self._page.evaluate(STORE_JS, [str(lat), str(lon)])
+            store = info.get("storeId")
+            good = bool(info.get("ok"))  # real JSON response, not a WAF challenge
+            # storeId -> serviceable; clean JSON with the not-present marker ->
+            # truly unserviceable. Both are definitive and need no retry.
+            if store:
+                return store, True
+            if good and info.get("notPresent"):
+                return None, True
+            # Otherwise the session is likely stale (Swiggy returns HTTP 202 with
+            # an empty body while the AWS WAF challenge is pending). Re-prime and
+            # retry so an expired session doesn't make every location look dead.
+            if attempt < 2:
+                await self._prime()
+        # Still no clean answer -> treat as an error, not "not serviceable".
+        return None, False
+
+    def _search_bad(self, res):
+        """A search response we shouldn't trust as a real 'no results'.
+
+        A serviceable store returning zero product cards is almost always a
+        stale/rate-limited session rather than a genuine empty catalogue, so we
+        treat it as bad and let the caller re-prime and retry.
+        """
+        items = res.get("items")
+        return (res.get("status") != 200 or res.get("empty")
+                or items is None or len(items) == 0)
+
     async def _query(self, lat, lon, query):
         await self._ensure()
-        store = await self._page.evaluate(STORE_JS, [str(lat), str(lon)])
+        store, definitive = await self._store_lookup(lat, lon)
         if not store:
-            return {"serviceable": False, "store": None, "items": []}
+            if definitive:
+                return {"serviceable": False, "store": None, "items": []}
+            # Stale/blocked session we couldn't recover -> report as an error so
+            # the UI shows a transient failure rather than a false "Unserviceable".
+            return {"serviceable": None, "store": None, "items": [],
+                    "error": "swiggy session/WAF challenge not solved"}
         res = await self._page.evaluate(SEARCH_JS, [store, query])
-        if res.get("empty") or res.get("items") is None:
-            # session/WAF likely stale -> re-prime once and retry
+        if self._search_bad(res):
+            # Likely a stale session -> re-prime, re-resolve the store (it can
+            # change after a fresh session) and retry once before trusting it.
             await self._prime()
+            store2, _ = await self._store_lookup(lat, lon)
+            store = store2 or store
             res = await self._page.evaluate(SEARCH_JS, [store, query])
         return {"serviceable": True, "store": store, "items": res.get("items") or []}
 

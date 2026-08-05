@@ -1,0 +1,17 @@
+{
+  "name": "stockly-wa-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted WhatsApp sender bridge for Stockly stock alerts (whatsapp-web.js).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "logout": "rm -rf .wwebjs_auth .wwebjs_cache && echo 'Session cleared — restart and re-scan the QR.'"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}
