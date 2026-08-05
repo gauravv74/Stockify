@@ -39,11 +39,12 @@
     --header-h: 56px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html { height: 100%; }
+  html { height: 100%; overflow-x: hidden; }
   body {
     margin: 0; min-height: 100%; color: var(--text); background: var(--bg);
     font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
     font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
   }
 
   .topbar {
@@ -166,6 +167,44 @@
     box-shadow: 0 0 0 3px rgba(15, 118, 110, .12);
   }
   .hint { margin-top: 6px; font-size: 12px; color: var(--muted); }
+
+  /* Product picker */
+  .prod-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .prod-options {
+    margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .prod-options .po-head {
+    padding: 8px 12px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted); background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .po-list { max-height: 260px; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .po-item {
+    display: flex; align-items: flex-start; gap: 10px; width: 100%;
+    padding: 10px 12px; border: none; border-top: 1px solid var(--border);
+    background: transparent; text-align: left; font: inherit; cursor: pointer;
+  }
+  .po-item:first-child { border-top: none; }
+  .po-item:hover { background: var(--surface-2); }
+  .po-item .po-meta { min-width: 0; flex: 1; }
+  .po-item .po-name { font-weight: 700; color: var(--ink); font-size: 13px; }
+  .po-item .po-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .po-item .po-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+  .po-item .po-price { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .po-stock { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: 2px 6px; border-radius: 999px; }
+  .po-stock.in { background: var(--green-bg); color: var(--green); }
+  .po-stock.out { background: var(--orange-bg); color: var(--orange); }
+  .po-empty { padding: 16px 12px; color: var(--muted); font-size: 12.5px; }
+  .prod-picked {
+    margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: var(--green-bg); border: 1px solid #a7f3d0; color: var(--green);
+    font-size: 12px; font-weight: 600; display: none; align-items: center; gap: 8px;
+  }
+  .prod-picked.show { display: flex; }
+  .prod-picked .link-btn { color: var(--green); margin-left: auto; }
+
   .loc-panel { display: none; }
   .loc-panel.active { display: block; }
 
@@ -249,6 +288,37 @@
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; min-height: 28px; }
   .status-text { font-size: 13px; color: var(--muted); font-weight: 500; display: flex; align-items: center; gap: 8px; min-width: 0; }
   .status-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Sort + distance-reference controls (nearest-first ordering) */
+  .sort-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    margin: 0 0 10px; padding: 8px 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  }
+  .sort-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .sort-lbl {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted);
+  }
+  #sortMode {
+    height: 30px; border: 1px solid var(--border); border-radius: 7px;
+    padding: 0 8px; font: inherit; font-size: 12.5px; font-weight: 600;
+    background: var(--surface-2); color: var(--text);
+  }
+  #refPin { width: 112px; height: 30px; padding: 0 8px; font-size: 12.5px; }
+  #refLabel { font-size: 12px; font-weight: 600; color: var(--accent); }
+  .dist {
+    display: inline-block; margin-left: 4px;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 1px 6px; white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    #refPin { font-size: 16px; width: 40vw; }
+  }
+
   .spin {
     width: 12px; height: 12px; flex-shrink: 0;
     border: 2px solid rgba(15, 118, 110, .25); border-top-color: var(--accent);
@@ -272,6 +342,13 @@
   .r-card.row-instock { border-color: #a7f3d0; background: #f0fdf9; }
   .pin { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 600; font-size: 12.5px; color: var(--ink); }
   .loc { color: var(--muted); font-size: 12px; max-width: 180px; }
+  .maplink {
+    display: inline-block; margin-left: 4px; white-space: nowrap;
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    text-decoration: none; border: 1px solid var(--border);
+    border-radius: 999px; padding: 1px 6px; background: var(--surface-2);
+  }
+  .maplink:hover { text-decoration: underline; }
   .prod { font-weight: 600; color: var(--text); }
   .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .price { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -325,7 +402,34 @@
     .r-meta strong { color: var(--ink); font-weight: 700; }
     .r-plat { display: none; margin-bottom: 8px; }
     body.show-platform .r-plat { display: inline-flex; }
+
+    /* Topbar: collapse action buttons to icons and keep everything on one row. */
     .icon-btn .btn-label { display: none; }
+    .topbar { gap: 8px; }
+    .topbar-actions { gap: 6px; }
+    .icon-btn { padding: 0 9px; height: 34px; }
+    .user-chip { padding: 0 8px; height: 34px; max-width: 42vw; }
+    .user-chip #userChipName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .user-chip .role { display: none; }
+    .brand-mark { width: 30px; height: 30px; }
+    .brand-text h1 { font-size: 15px; }
+
+    /* iOS zooms when focusing inputs under 16px — bump them up on small screens. */
+    input[type="text"], input[type="search"], input[type="password"], textarea {
+      font-size: 16px;
+    }
+
+    /* Modals: hug the top and use the full width comfortably. */
+    .modal-backdrop { padding: 12px 10px calc(12px + var(--safe-b)); }
+    .modal { border-radius: 14px; }
+    .modal-head { padding: 14px; }
+    .modal-body { padding: 14px; }
+    .create-grid { gap: 10px; }
+
+    /* Product picker fits the narrow column. */
+    .po-list { max-height: 46vh; }
+    .po-item { padding: 12px; }
+
     .sticky-actions {
       position: sticky; bottom: 0; z-index: 30; margin: 0 -14px -14px;
       padding: 12px 14px calc(12px + var(--safe-b));
@@ -335,6 +439,15 @@
     }
     .sticky-actions .actions { margin-top: 0; flex-direction: row; }
     .sticky-actions .btn { flex: 1; }
+  }
+  @media (max-width: 400px) {
+    .page { padding: 12px 10px calc(20px + var(--safe-b)); }
+    .topbar { padding: 0 10px; }
+    .stat .n { font-size: 16px; }
+    .stat .l { font-size: 10px; }
+    .user-chip { display: none !important; }
+    .plat { padding: 8px 10px; font-size: 12px; }
+    .prod-head { flex-wrap: wrap; gap: 4px; }
   }
   @media (min-width: 641px) { .plat .label-short { display: none; } }
 
@@ -439,6 +552,26 @@
   .admin-msg.show { display: block; }
   .admin-msg.ok { background: var(--green-bg); color: var(--green); border: 1px solid #a7f3d0; }
   .admin-msg.err { background: var(--red-bg); color: var(--red); border: 1px solid #fecaca; }
+
+  /* Watches panel */
+  .wa-banner {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    justify-content: space-between; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface-2); font-size: 13px;
+  }
+  .wa-status { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .wa-status::before {
+    content: ''; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex: none;
+  }
+  .wa-status.ok::before { background: var(--green); }
+  .wa-status.bad::before { background: var(--red); }
+  .wa-actions { display: flex; gap: 8px; align-items: center; }
+  .wa-actions input { height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; width: 170px; }
+  #watchPlatform { height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; font-size: 14px; background: var(--surface); width: 100%; }
+  .watch-cities { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .watch-cities summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .watches-empty { padding: 20px 8px; text-align: center; color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body class="locked">
@@ -541,13 +674,26 @@
       <span id="userChipName">—</span>
       <span class="role" id="userChipRole">user</span>
     </div>
-    <button class="icon-btn authed-only" id="usersBtn" style="display:none;" title="Manage users">Users</button>
-    <button class="icon-btn authed-only" id="pwdBtn" style="display:none;" title="Change password">Password</button>
-    <button class="icon-btn authed-only" id="csvBtn" disabled title="Export CSV">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    <button class="icon-btn authed-only" id="usersBtn" style="display:none;" title="Manage users" aria-label="Manage users">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span class="btn-label">Users</span>
+    </button>
+    <button class="icon-btn authed-only" id="watchesBtn" style="display:none;" title="Stock watches & WhatsApp alerts" aria-label="Watches">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span class="btn-label">Watches</span>
+    </button>
+    <button class="icon-btn authed-only" id="pwdBtn" style="display:none;" title="Change password" aria-label="Change password">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>
+      <span class="btn-label">Password</span>
+    </button>
+    <button class="icon-btn authed-only" id="csvBtn" disabled title="Export CSV" aria-label="Export CSV">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       <span class="btn-label">Export</span>
     </button>
-    <button class="icon-btn authed-only" id="logoutBtn" style="display:none;" title="Sign out">Sign out</button>
+    <button class="icon-btn authed-only" id="logoutBtn" style="display:none;" title="Sign out" aria-label="Sign out">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span class="btn-label">Sign out</span>
+    </button>
   </div>
 </header>
 
@@ -666,6 +812,84 @@
   </div>
 </div>
 
+<div id="watchesModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="watchesTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="watchesTitle">Stock watches &amp; WhatsApp alerts</h3>
+      <button type="button" class="icon-btn" id="watchesClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="admin-msg" id="watchesMsg"></div>
+
+      <div class="wa-banner" id="waBanner">
+        <div class="wa-status" id="waStatus">Checking WhatsApp status…</div>
+        <div class="wa-actions">
+          <input type="text" id="waTestTo" placeholder="test number (optional)" autocomplete="off" />
+          <button type="button" class="btn" id="waTestBtn">Send test</button>
+        </div>
+      </div>
+
+      <div class="panel" style="box-shadow:none; margin:12px 0 16px;">
+        <div class="panel-head"><h2>Add a watch</h2></div>
+        <div class="panel-body">
+          <div class="create-grid">
+            <div class="field" style="margin:0;">
+              <label for="watchPlatform">Platform</label>
+              <select id="watchPlatform"></select>
+            </div>
+            <div class="field" style="margin:0;">
+              <label for="watchProducts">Product(s)</label>
+              <input type="text" id="watchProducts" placeholder="amul gold milk, iphone 17" autocomplete="off" />
+            </div>
+          </div>
+          <div class="field" style="margin-top:12px;">
+            <label for="watchPins">Pincodes</label>
+            <input type="text" id="watchPins" placeholder="411045, 400001" autocomplete="off" />
+            <div class="hint">Comma or newline separated 6-digit codes. Add cities below to expand every mapped pincode.</div>
+          </div>
+
+          <details class="watch-cities">
+            <summary>Add whole cities (optional) <span class="count" id="watchCityCount">0 selected</span></summary>
+            <div class="city-tools" style="margin-top:8px;">
+              <input type="search" id="watchCitySearch" placeholder="Search Pune, Mumbai, Delhi…" autocomplete="off" />
+              <button type="button" class="link-btn" id="watchCityClear">Clear</button>
+            </div>
+            <div class="city-list" id="watchCityList" style="max-height:200px;" role="group" aria-label="Cities"></div>
+          </details>
+
+          <div class="field" style="margin-top:12px;">
+            <label for="watchNotifyTo">Notify WhatsApp number <span class="count">optional</span></label>
+            <input type="text" id="watchNotifyTo" placeholder="defaults to configured number" autocomplete="off" />
+          </div>
+
+          <button type="button" class="btn btn-primary" id="watchAddBtn" style="width:100%; margin-top:14px;">Add watch</button>
+        </div>
+      </div>
+
+      <div class="panel-head" style="border:0; padding:0 0 8px;">
+        <h2>Your watches <span class="count" id="watchListCount">0</span></h2>
+        <button type="button" class="link-btn" id="watchRefresh">Refresh</button>
+      </div>
+      <div class="table-scroll" style="max-height:none;">
+        <table class="users-table" id="watchesTable">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Location</th>
+              <th style="width:96px;">Platform</th>
+              <th style="width:120px;">Status</th>
+              <th style="width:120px;">Checked</th>
+              <th style="width:60px;">On</th>
+              <th style="width:56px;"></th>
+            </tr>
+          </thead>
+          <tbody id="watchesTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="appShell">
 <main class="page">
   <div class="platform-bar">
@@ -741,9 +965,17 @@
         </div>
 
         <div class="field" style="margin-top:14px;">
-          <label for="products">Product</label>
-          <input type="text" id="products" value="iphone 17" placeholder="e.g. iphone 17, milk" />
-          <div class="hint">Comma-separate multiple products.</div>
+          <div class="field-label prod-head">
+            <label for="products" style="margin:0; text-transform:none; letter-spacing:0;">Product</label>
+            <button type="button" class="link-btn" id="findProductsBtn">Find on platform</button>
+          </div>
+          <input type="text" id="products" value="iphone 17" placeholder="e.g. iphone 17, milk" autocomplete="off" />
+          <div class="hint">Type freely (comma-separate multiple), or <strong>Find on platform</strong> to pick the exact product.</div>
+          <div class="prod-picked" id="prodPicked">
+            <span id="prodPickedText"></span>
+            <button type="button" class="link-btn" id="prodPickedClear">Clear</button>
+          </div>
+          <div class="prod-options" id="prodOptions" style="display:none;"></div>
         </div>
 
         <div class="sticky-actions">
@@ -770,6 +1002,22 @@
       <div class="progress"><div id="bar"></div></div>
       <div class="toolbar">
         <div class="status-text" id="statusText"><span>Ready — pick a platform and location.</span></div>
+      </div>
+
+      <div class="sort-row" id="sortRow" style="display:none;">
+        <div class="sort-group">
+          <span class="sort-lbl">Order</span>
+          <select id="sortMode">
+            <option value="stock">In-stock first</option>
+            <option value="distance">Nearest first</option>
+          </select>
+        </div>
+        <div class="sort-group">
+          <button type="button" class="link-btn" id="useLocBtn">📍 Use my location</button>
+          <input type="text" id="refPin" inputmode="numeric" maxlength="6" placeholder="or pincode" autocomplete="off" />
+          <button type="button" class="link-btn" id="setRefBtn">Set</button>
+          <span id="refLabel"></span>
+        </div>
       </div>
 
       <div class="panel results">
@@ -810,9 +1058,19 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let controller = null;
 let rows = [];
 let platform = 'blinkit';
+
+// ── Background search job state (keeps a run alive across tab switches) ──────
+let activeJobId = null;
+let jobCursor = 0;
+let jobTotal = 0;
+let pollTimer = null;
+const JOB_LS_KEY = 'stockly_active_job';
+
+// ── Distance ordering state (sort pincodes nearest-first) ───────────────────
+let sortMode = 'stock';         // 'stock' | 'distance'
+let refLat = null, refLon = null, refLabel = '';
 let locMode = 'cities'; // cities | pincodes | both
 let citiesCatalog = [];
 let selectedCities = new Set();
@@ -943,6 +1201,8 @@ async function onLoggedIn() {
     await loadCities();
     citiesLoaded = true;
   }
+  // Reattach to a search that may still be running from before a reload.
+  resumeJobIfAny();
 }
 
 function showPwdMsg(text, ok = true) {
@@ -1319,6 +1579,13 @@ function selectPlatform(p) {
   });
   document.documentElement.style.setProperty('--platform', (PLATFORMS[p] || PLATFORMS.blinkit).color);
   document.body.classList.toggle('show-platform', p === 'all');
+  // Product picker needs a single platform; disable + reset it for "All".
+  const findBtn = $('findProductsBtn');
+  if (findBtn) {
+    findBtn.disabled = (p === 'all');
+    findBtn.textContent = (p === 'all') ? 'Pick one platform to browse' : 'Find on platform';
+  }
+  if (typeof hideProdOptions === 'function') hideProdOptions();
 }
 document.querySelectorAll('.plat').forEach(t =>
   t.addEventListener('click', () => selectPlatform(t.dataset.platform)));
@@ -1436,6 +1703,14 @@ function cleanLoc(loc) {
   if (!loc) return '';
   return loc.replace(/, India$/i, '').replace(/\s*\(via India Post\)\s*$/i, '');
 }
+// Google Maps URL for the exact point a result was checked at. Availability on
+// q-commerce is per dark-store, so this is the precise coordinate the stock
+// belongs to (not the whole pincode). Returns '' when coords are missing.
+function mapsUrl(r) {
+  const la = parseFloat(r.lat), lo = parseFloat(r.lon);
+  if (!isFinite(la) || !isFinite(lo)) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${la},${lo}`;
+}
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1465,12 +1740,46 @@ function statusRank(s) {
   return 70;
 }
 
-function sortRowsInStockFirst(list) {
+// Great-circle distance (km) between two lat/lon points.
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, toRad = (x) => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+// Distance of a result row from the current reference point, or null.
+function rowDistance(r) {
+  if (refLat == null || refLon == null) return null;
+  const la = parseFloat(r.lat), lo = parseFloat(r.lon);
+  if (!isFinite(la) || !isFinite(lo)) return null;
+  return haversineKm(refLat, refLon, la, lo);
+}
+function fmtDist(d) {
+  if (d == null) return '';
+  return (d < 10 ? d.toFixed(1) : Math.round(d)) + ' km';
+}
+
+function sortRows(list) {
+  const byDist = sortMode === 'distance' && refLat != null;
   return [...list].sort((a, b) => {
-    const ra = statusRank(a.status);
-    const rb = statusRank(b.status);
+    if (byDist) {
+      // Primary: nearest pincode first (rows without coords sink to the end).
+      const da = rowDistance(a), db = rowDistance(b);
+      const na = (da == null), nb = (db == null);
+      if (na !== nb) return na ? 1 : -1;
+      if (!na && da !== db) return da - db;
+      const ra = statusRank(a.status), rb = statusRank(b.status);
+      if (ra !== rb) return ra - rb;
+      return String(a.pincode).localeCompare(String(b.pincode));
+    }
+    // Default: in-stock first; tie-break by distance (if a ref is set) then pincode.
+    const ra = statusRank(a.status), rb = statusRank(b.status);
     if (ra !== rb) return ra - rb;
-    // same status: group by pincode, then platform
+    if (refLat != null) {
+      const da = rowDistance(a), db = rowDistance(b);
+      if (da != null && db != null && da !== db) return da - db;
+    }
     const pin = String(a.pincode).localeCompare(String(b.pincode));
     if (pin !== 0) return pin;
     return String(a.platform || '').localeCompare(String(b.platform || ''));
@@ -1486,12 +1795,19 @@ function rowHtml(r) {
     ? `<span class="prod">${escHtml(r.name)}</span><div class="sub">${escHtml(r.variant || '')}</div>`
     : `<span class="prod">${escHtml(r.product)}</span>`;
   const loc = cleanLoc(r.location);
+  const distStr = fmtDist(rowDistance(r));
+  const distChip = distStr ? ` <span class="dist">${distStr}</span>` : '';
+  const mapU = mapsUrl(r);
+  // Exact checked-point map link (the store the stock actually belongs to).
+  const mapChip = mapU
+    ? ` <a class="maplink" href="${mapU}" target="_blank" rel="noopener" title="Open exact checked location in Google Maps">📍 Map</a>`
+    : '';
   const badge = `<span class="badge ${badgeClass(r.status)}">${escHtml(statusLabel(r.status))}</span>`;
   const pTag = platformTag(r.platform);
   const tr = `
     <td class="col-platform">${pTag}</td>
     <td class="pin">${escHtml(r.pincode)}</td>
-    <td class="loc">${loc ? escHtml(loc) : '<span class="sub">—</span>'}</td>
+    <td class="loc">${loc ? escHtml(loc) : '<span class="sub">—</span>'}${distChip}${mapChip}</td>
     <td>${prod}</td>
     <td>${badge}</td>
     <td class="price">${price}</td>
@@ -1501,7 +1817,7 @@ function rowHtml(r) {
     <div class="r-top">
       <div>
         <div class="pin">${escHtml(r.pincode)}</div>
-        <div class="sub" style="margin-top:2px;">${loc ? escHtml(loc) : '—'}</div>
+        <div class="sub" style="margin-top:2px;">${loc ? escHtml(loc) : '—'}${distStr ? ' · ' + distStr : ''}${mapChip}</div>
       </div>
       ${badge}
     </div>
@@ -1540,7 +1856,7 @@ function renderAllRows(sorted) {
 
 function finalizeResultsOrder() {
   if (!rows.length) return;
-  rows = sortRowsInStockFirst(rows);
+  rows = sortRows(rows);
   renderAllRows(rows);
   // scroll results panel to top so in-stock pins are visible
   const scroll = document.querySelector('.table-scroll');
@@ -1556,7 +1872,63 @@ function addRow(r) {
   counts.total++;
   if (counts[r.status] !== undefined) counts[r.status]++;
   updateStats();
+  updateSortTools();
 }
+
+// ── Distance / sort controls ────────────────────────────────────────────────
+function updateSortTools() {
+  $('sortRow').style.display = rows.length ? 'flex' : 'none';
+  $('sortMode').value = sortMode;
+  $('refLabel').textContent = (refLat != null) ? `Nearest to ${refLabel}` : '';
+}
+
+function applySortRef(lat, lon, label, switchToDistance) {
+  refLat = lat; refLon = lon; refLabel = label || '';
+  if (switchToDistance) sortMode = 'distance';
+  updateSortTools();
+  if (rows.length) { rows = sortRows(rows); renderAllRows(rows); }
+}
+
+async function setRefFromPin() {
+  const pin = ($('refPin').value.match(/\d{6}/) || [])[0];
+  if (!pin) { setStatus('<span>Enter a 6-digit pincode to order by distance from it.</span>'); return; }
+  const btn = $('setRefBtn'); const prev = btn.textContent; btn.textContent = '…'; btn.disabled = true;
+  try {
+    const data = await apiJson(`/api/geocode?pincode=${pin}`);
+    applySortRef(parseFloat(data.lat), parseFloat(data.lon), cleanLoc(data.place) || pin, true);
+    $('refPin').value = '';
+  } catch (e) {
+    setStatus(`<span>${escHtml(e.message)}</span>`);
+  } finally { btn.textContent = prev; btn.disabled = false; }
+}
+
+$('sortMode').addEventListener('change', (e) => {
+  sortMode = e.target.value;
+  if (sortMode === 'distance' && refLat == null) {
+    setStatus('<span>Pick a reference — “Use my location” or enter a pincode.</span>');
+  }
+  if (rows.length) { rows = sortRows(rows); renderAllRows(rows); }
+});
+$('useLocBtn').addEventListener('click', () => {
+  if (!navigator.geolocation) { setStatus('<span>Geolocation isn’t available on this device.</span>'); return; }
+  const btn = $('useLocBtn'); const prev = btn.textContent;
+  btn.textContent = 'Locating…'; btn.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      btn.textContent = prev; btn.disabled = false;
+      applySortRef(pos.coords.latitude, pos.coords.longitude, 'your location', true);
+    },
+    (err) => {
+      btn.textContent = prev; btn.disabled = false;
+      setStatus(`<span>Couldn’t get your location: ${escHtml(err.message || 'permission denied')}.</span>`);
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+  );
+});
+$('setRefBtn').addEventListener('click', setRefFromPin);
+$('refPin').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); setRefFromPin(); }
+});
 
 function setRunning(on) {
   $('runBtn').style.display = on ? 'none' : 'flex';
@@ -1567,6 +1939,7 @@ function setRunning(on) {
   $('citySearch').disabled = on;
   $('clearCities').disabled = on;
   $('pincodes').disabled = on;
+  $('findProductsBtn').disabled = on || platform === 'all';
 }
 function setStatus(html) { $('statusText').innerHTML = html; }
 
@@ -1596,105 +1969,171 @@ function validateLocation() {
   return true;
 }
 
+// ── Background search runs ──────────────────────────────────────────────────
+// A run executes server-side and is polled, so it keeps going even if the tab
+// is backgrounded, the phone is locked, or the page is reloaded. We just track
+// a cursor and pick up any rows we missed while we were away.
+function saveActiveJob(id) {
+  try { id ? localStorage.setItem(JOB_LS_KEY, id) : localStorage.removeItem(JOB_LS_KEY); } catch (_) {}
+}
+function clearJobState() {
+  activeJobId = null; jobCursor = 0; jobTotal = 0;
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  saveActiveJob(null);
+}
+
+function renderMeta(msg) {
+  if (!msg) return;
+  jobTotal = msg.total || 0;
+  document.body.classList.toggle('show-platform', msg.platform === 'all');
+  const cityLabel = (msg.cities || []).map(c => c.name).join(', ');
+  const platLabel = msg.platform === 'all'
+    ? `all ${(msg.platforms || []).length} platforms`
+    : (PLATFORMS[msg.platform]?.name || msg.platform);
+  const where = cityLabel ? `${cityLabel} · ${msg.pincodes} pins` : `${msg.pincodes} pins`;
+  const warm = (msg.platform === 'all' || ['instamart', 'zepto', 'flipkart', 'jiomart', 'apple'].includes(msg.platform))
+    ? ' · browser-backed platforms may take longer on first run' : '';
+  setStatus(`<span class="spin"></span><span>${escHtml(platLabel)} · ${escHtml(where)} · ${jobTotal} checks${warm}</span>`);
+}
+
+function finishRun(status, detail) {
+  const total = jobTotal;
+  const done = rows.length;
+  clearJobState();
+  setRunning(false);
+  $('csvBtn').disabled = rows.length === 0;
+  $('bar').style.width = '100%';
+  if (rows.length === 0) {
+    setStatus(status === 'error'
+      ? `<span>Error: ${escHtml(detail || 'search failed')}</span>`
+      : '<span>No results.</span>');
+    $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
+    $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
+    return;
+  }
+  const inStock = counts.available;
+  const inStockPins = new Set(rows.filter(r => r.status === 'available').map(r => r.pincode)).size;
+  if (status === 'canceled') {
+    setStatus(`<span>Stopped at ${done} / ${total || done}. <strong style="color:var(--green)">${inStock} in stock</strong> (shown first).</span>`);
+  } else if (status === 'error') {
+    setStatus(`<span>Stopped on error: ${escHtml(detail || 'unknown')} — showing ${done} result${done === 1 ? '' : 's'}.</span>`);
+  } else {
+    setStatus(`<span>Done — ${done} checked · <strong style="color:var(--green)">${inStock} in stock</strong>${inStockPins ? ` across ${inStockPins} pincode${inStockPins === 1 ? '' : 's'}` : ''} (shown first).</span>`);
+  }
+}
+
+async function pollJob() {
+  pollTimer = null;
+  if (!activeJobId) return;
+  const id = activeJobId;
+  let data;
+  try {
+    data = await apiJson(`/api/check/poll?job_id=${encodeURIComponent(id)}&cursor=${jobCursor}`);
+  } catch (e) {
+    if (e.status === 401) { currentUser = null; applyAuthUI(); clearJobState(); setRunning(false); return; }
+    if (e.status === 404) {
+      // Job aged out of the server (or was never created) — stop cleanly.
+      finalizeResultsOrder();
+      clearJobState(); setRunning(false);
+      setStatus('<span>Search session expired — run it again.</span>');
+      return;
+    }
+    // Transient (e.g. the tab was suspended and the network dropped) — retry.
+    if (activeJobId === id) pollTimer = setTimeout(pollJob, 1500);
+    return;
+  }
+  if (activeJobId !== id) return; // a newer run started while we were awaiting
+  if (data.meta) renderMeta(data.meta);
+  for (const ev of (data.events || [])) addRow(ev);
+  if ((data.events || []).length) jobCursor = data.cursor;
+  const done = rows.length;
+  $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
+  if (data.status === 'running') {
+    setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
+    pollTimer = setTimeout(pollJob, 800);
+  } else {
+    finalizeResultsOrder();
+    finishRun(data.status, data.detail);
+  }
+}
+
 async function run() {
   if (!validateLocation()) return;
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   const payload = buildPayload();
 
   rows = [];
   resetCounts();
+  jobCursor = 0;
+  updateSortTools();
   document.body.classList.toggle('show-platform', platform === 'all');
-  $('tbody').innerHTML = `<tr><td colspan="7" class="empty"><div class="empty-title">Starting…</div><div class="empty-sub">Streaming results as they arrive.</div></td></tr>`;
-  $('cards').innerHTML = emptyState('Starting…', 'Streaming results as they arrive.');
+  $('tbody').innerHTML = `<tr><td colspan="7" class="empty"><div class="empty-title">Starting…</div><div class="empty-sub">Runs in the background — safe to switch tabs or lock your phone.</div></td></tr>`;
+  $('cards').innerHTML = emptyState('Starting…', 'Runs in the background — safe to switch tabs or lock your phone.');
   $('bar').style.width = '0%';
   setRunning(true);
 
-  controller = new AbortController();
-  let total = 0, done = 0;
-
   try {
-    const resp = await fetch('/api/check', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-    if (resp.status === 401) {
-      currentUser = null;
-      applyAuthUI();
-      throw new Error('Session expired — please sign in again.');
-    }
-    if (resp.status === 403) {
-      const errBody = await resp.json().catch(() => ({}));
-      throw new Error(errBody.error || 'No platform access for this account.');
-    }
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const { value, done: streamDone } = await reader.read();
-      if (streamDone) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line) continue;
-        const msg = JSON.parse(line);
-        if (msg.type === 'error') {
-          setStatus(`<span>Error: ${escHtml(msg.message)}</span>`);
-        } else if (msg.type === 'meta') {
-          total = msg.total;
-          const cityLabel = (msg.cities || []).map(c => c.name).join(', ');
-          const platLabel = msg.platform === 'all'
-            ? `all ${ (msg.platforms || []).length } platforms`
-            : (PLATFORMS[msg.platform]?.name || msg.platform);
-          const where = cityLabel
-            ? `${cityLabel} · ${msg.pincodes} pins`
-            : `${msg.pincodes} pins`;
-          const warm = (msg.platform === 'all' || msg.platform === 'instamart' || msg.platform === 'zepto' || msg.platform === 'flipkart' || msg.platform === 'jiomart' || msg.platform === 'apple')
-            ? ' · browser-backed platforms may take longer on first run'
-            : '';
-          setStatus(`<span class="spin"></span><span>${platLabel} · ${where} · ${total} checks${warm}</span>`);
-        } else if (msg.type === 'result') {
-          addRow(msg);
-          done++;
-          $('bar').style.width = total ? (100 * done / total) + '%' : '0%';
-          setStatus(`<span class="spin"></span><span>${done} / ${total} checked</span>`);
-        } else if (msg.type === 'done') {
-          finalizeResultsOrder();
-          const inStock = counts.available;
-          const inStockPins = new Set(rows.filter(r => r.status === 'available').map(r => r.pincode)).size;
-          setStatus(`<span>Done — ${done} checked · <strong style="color:var(--green)">${inStock} in stock</strong>${inStockPins ? ` across ${inStockPins} pincode${inStockPins === 1 ? '' : 's'}` : ''} (shown first).</span>`);
-          $('bar').style.width = '100%';
-        }
-      }
-    }
+    const data = await apiJson('/api/check/start', { method: 'POST', body: JSON.stringify(payload) });
+    activeJobId = data.job_id;
+    jobCursor = 0;
+    saveActiveJob(activeJobId);
+    renderMeta(data.meta);
+    pollJob();
   } catch (e) {
-    if (e.name === 'AbortError') {
-      finalizeResultsOrder();
-      setStatus(`<span>Stopped at ${done} / ${total}. In-stock results moved to top.</span>`);
-    }
-    else { console.error(e); setStatus(`<span>Error: ${escHtml(e.message)}</span>`); }
-  } finally {
+    if (e.status === 401) { currentUser = null; applyAuthUI(); }
+    clearJobState();
     setRunning(false);
-    $('csvBtn').disabled = rows.length === 0;
-    if (rows.length === 0) {
-      $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
-      $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
-    }
+    setStatus(`<span>Error: ${escHtml(e.message)}</span>`);
+    $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
+    $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
   }
 }
 
+// After a reload / navigating back, transparently reattach to a run that's
+// still going (or replay one that just finished) so nothing is lost.
+async function resumeJobIfAny() {
+  let id = null;
+  try { id = localStorage.getItem(JOB_LS_KEY); } catch (_) {}
+  if (!id) return;
+  let data;
+  try {
+    data = await apiJson(`/api/check/poll?job_id=${encodeURIComponent(id)}&cursor=0`);
+  } catch (_) { saveActiveJob(null); return; }
+  activeJobId = id;
+  jobCursor = 0;
+  rows = [];
+  resetCounts();
+  renderMeta(data.meta);
+  setRunning(data.status === 'running');
+  for (const ev of (data.events || [])) addRow(ev);
+  if ((data.events || []).length) jobCursor = data.cursor;
+  if (data.status === 'running') {
+    setStatus(`<span class="spin"></span><span>Resumed — ${rows.length} / ${jobTotal || '?'} checked</span>`);
+    pollTimer = setTimeout(pollJob, 500);
+  } else {
+    finalizeResultsOrder();
+    finishRun(data.status, data.detail);
+  }
+}
+
+// Coming back to a foregrounded tab: catch up immediately instead of waiting.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !activeJobId) return;
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  pollJob();
+});
+
 function exportCSV() {
-  const cols = ['platform','pincode','location','product','status','available','name','variant','brand','price','mrp','inventory','eta','merchant_id','lat','lon'];
+  const cols = ['platform','pincode','location','distance_km','product','status','available','name','variant','brand','price','mrp','inventory','eta','merchant_id','lat','lon'];
   const esc = (v) => {
     v = v == null ? '' : String(v);
     return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   };
   const lines = [cols.join(',')];
-  for (const r of sortRowsInStockFirst(rows)) lines.push(cols.map(c => esc(r[c])).join(','));
+  for (const r of sortRows(rows)) {
+    const d = rowDistance(r);
+    lines.push(cols.map(c => c === 'distance_km' ? esc(d == null ? '' : d.toFixed(1)) : esc(r[c])).join(','));
+  }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1702,8 +2141,264 @@ function exportCSV() {
   a.click();
 }
 
+// ── Product picker ─────────────────────────────────────────────────────────
+// Query the selected platform at your first location and let you pick the exact
+// product (SKU) to lock into the field, instead of relying only on free text.
+function hideProdOptions() {
+  const el = $('prodOptions');
+  el.style.display = 'none';
+  el.innerHTML = '';
+}
+
+function setPicked(text) {
+  if (text) {
+    $('prodPickedText').textContent = text;
+    $('prodPicked').classList.add('show');
+  } else {
+    $('prodPicked').classList.remove('show');
+    $('prodPickedText').textContent = '';
+  }
+}
+
+// Compose the exact product string to lock into the input (append the variant
+// when it isn't already part of the name, so the SKU stays unambiguous).
+function optionLabel(o) {
+  const name = (o.name || '').trim();
+  const variant = (o.variant || '').trim();
+  if (variant && !name.toLowerCase().includes(variant.toLowerCase())) {
+    return `${name} ${variant}`.trim();
+  }
+  return name;
+}
+
+function renderProdOptions(data) {
+  const el = $('prodOptions');
+  el.style.display = 'block';
+  const platName = PLATFORMS[data.platform]?.name || data.platform;
+  const loc = data.location || {};
+  const where = [loc.pincode, cleanLoc(loc.place)].filter(Boolean).join(' · ');
+  const opts = data.options || [];
+  const closeBtn = `<button type="button" class="link-btn" id="poClose">Close</button>`;
+  if (!opts.length) {
+    const msg = data.serviceable === false
+      ? `Not serviceable at ${escHtml(where || 'this location')}.`
+      : `No products matched on ${escHtml(platName)}.`;
+    el.innerHTML = `<div class="po-head"><span>${escHtml(platName)}</span>${closeBtn}</div><div class="po-empty">${msg}</div>`;
+    $('poClose').addEventListener('click', hideProdOptions);
+    return;
+  }
+  const rows = opts.map((o, i) => {
+    const sub = [o.brand, o.variant].filter(Boolean).join(' · ');
+    const price = (o.price != null && o.price !== '') ? '₹' + Number(o.price).toLocaleString('en-IN') : '';
+    const stock = o.inStock ? '<span class="po-stock in">In stock</span>' : '<span class="po-stock out">Out</span>';
+    return `<button type="button" class="po-item" data-i="${i}">
+      <div class="po-meta">
+        <div class="po-name">${escHtml(o.name)}</div>
+        ${sub ? `<div class="po-sub">${escHtml(sub)}</div>` : ''}
+      </div>
+      <div class="po-right">${price ? `<span class="po-price">${price}</span>` : ''}${stock}</div>
+    </button>`;
+  }).join('');
+  el.innerHTML = `<div class="po-head"><span>${escHtml(platName)}${where ? ' · ' + escHtml(where) : ''}</span>${closeBtn}</div><div class="po-list">${rows}</div>`;
+  $('poClose').addEventListener('click', hideProdOptions);
+  el.querySelectorAll('.po-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const o = opts[Number(btn.dataset.i)];
+      const label = optionLabel(o);
+      $('products').value = label;
+      setPicked(`Selected on ${platName}: ${label}`);
+      hideProdOptions();
+    });
+  });
+}
+
+async function findProducts() {
+  const btn = $('findProductsBtn');
+  if (platform === 'all') {
+    setStatus('<span>Pick a single platform (not “All platforms”) to browse products.</span>');
+    return;
+  }
+  const query = ($('products').value.split(',')[0] || '').trim();
+  if (!query) {
+    setStatus('<span>Type a product name, then Find on platform.</span>');
+    return;
+  }
+  if (!validateLocation()) return;
+  const payload = buildPayload();
+  payload.query = query;
+  const el = $('prodOptions');
+  el.style.display = 'block';
+  el.innerHTML = `<div class="po-empty"><span class="spin"></span> Searching ${escHtml(PLATFORMS[platform]?.name || platform)}…</div>`;
+  btn.disabled = true;
+  try {
+    const data = await apiJson('/api/product-options', { method: 'POST', body: JSON.stringify(payload) });
+    renderProdOptions(data);
+  } catch (e) {
+    if (e.status === 401) { currentUser = null; applyAuthUI(); }
+    el.innerHTML = `<div class="po-head"><span>Search failed</span><button type="button" class="link-btn" id="poClose">Close</button></div><div class="po-empty">${escHtml(e.message)}</div>`;
+    $('poClose').addEventListener('click', hideProdOptions);
+  } finally {
+    btn.disabled = (platform === 'all');
+  }
+}
+
+$('findProductsBtn').addEventListener('click', findProducts);
+$('prodPickedClear').addEventListener('click', () => setPicked(''));
+// Editing the product text (or clearing it) drops the "picked" confirmation.
+$('products').addEventListener('input', () => setPicked(''));
+
+// ── Stock watches & WhatsApp alerts ────────────────────────────────────────
+let watchCities = new Set();
+let watchesTimer = null;
+
+function showWatchesMsg(text, ok = true) {
+  const el = $('watchesMsg');
+  el.textContent = text;
+  el.className = 'admin-msg show ' + (ok ? 'ok' : 'err');
+}
+function clearWatchesMsg() { $('watchesMsg').className = 'admin-msg'; $('watchesMsg').textContent = ''; }
+
+function populateWatchPlatforms() {
+  const sel = $('watchPlatform');
+  const allowed = allowedPlatforms || [];
+  // Prefer Instamart first (the main target), then the rest the user can access.
+  const ordered = ['instamart', ...ALL_PLAT_KEYS.filter(p => p !== 'instamart')]
+    .filter(p => allowed.includes(p));
+  sel.innerHTML = ordered.map(p => `<option value="${p}">${escHtml(PLAT_LABEL[p] || p)}</option>`).join('');
+}
+
+function renderWatchCityCount() { $('watchCityCount').textContent = watchCities.size + ' selected'; }
+
+function renderWatches(list) {
+  $('watchListCount').textContent = list.length;
+  const tb = $('watchesTbody');
+  if (!list.length) {
+    tb.innerHTML = `<tr><td colspan="7"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
+    return;
+  }
+  tb.innerHTML = list.map(w => {
+    const status = w.last_status || '';
+    const badge = status
+      ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
+      : '<span class="sub">pending</span>';
+    const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
+    return `<tr data-id="${w.id}">
+      <td><span class="uname">${escHtml(w.product)}</span><div class="sub">${escHtml(w.pincode)}</div></td>
+      <td>${escHtml(w.place || w.pincode)}</td>
+      <td>${escHtml(PLAT_LABEL[w.platform] || w.platform)}</td>
+      <td>${badge}</td>
+      <td class="sub">${checked}</td>
+      <td><span class="switch"><input type="checkbox" data-act="toggle" ${w.active ? 'checked' : ''} /><span class="slider"></span></span></td>
+      <td><button type="button" class="link-btn" data-act="del">Delete</button></td>
+    </tr>`;
+  }).join('');
+  tb.querySelectorAll('input[data-act="toggle"]').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const id = cb.closest('tr').dataset.id;
+      try { await apiJson('/api/watches/' + id, { method: 'PATCH', body: JSON.stringify({ active: cb.checked }) }); }
+      catch (e) { showWatchesMsg(e.message, false); cb.checked = !cb.checked; }
+    });
+  });
+  tb.querySelectorAll('button[data-act="del"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.closest('tr').dataset.id;
+      try { await apiJson('/api/watches/' + id, { method: 'DELETE' }); await loadWatches(); }
+      catch (e) { showWatchesMsg(e.message, false); }
+    });
+  });
+}
+
+async function loadWatches() {
+  try {
+    const data = await apiJson('/api/watches');
+    const wa = data.whatsapp || {};
+    const st = $('waStatus');
+    st.classList.toggle('ok', !!wa.configured);
+    st.classList.toggle('bad', !wa.configured);
+    st.textContent = wa.configured
+      ? `WhatsApp ready · via ${wa.provider} · alerts on “${wa.notify_on}” · every ${data.interval_min} min`
+      : `WhatsApp not configured (provider: ${wa.provider}) — alerts won’t be delivered`;
+    renderWatches(data.watches || []);
+  } catch (e) {
+    if (e.status === 401) { currentUser = null; applyAuthUI(); closeWatches(); return; }
+    showWatchesMsg(e.message, false);
+  }
+}
+
+async function addWatch() {
+  clearWatchesMsg();
+  const payload = {
+    platform: $('watchPlatform').value,
+    products: $('watchProducts').value.trim(),
+    pincodes: $('watchPins').value.trim(),
+    cities: Array.from(watchCities),
+  };
+  const notifyTo = $('watchNotifyTo').value.trim();
+  if (notifyTo) payload.notify_to = notifyTo;
+  if (!payload.products) { showWatchesMsg('Enter at least one product.', false); return; }
+  if (!payload.pincodes && watchCities.size === 0) { showWatchesMsg('Enter a pincode or pick a city.', false); return; }
+  const btn = $('watchAddBtn'); btn.disabled = true;
+  try {
+    const data = await apiJson('/api/watches', { method: 'POST', body: JSON.stringify(payload) });
+    const errs = (data.errors || []).length;
+    showWatchesMsg(`Added ${data.created} watch${data.created === 1 ? '' : 'es'}.${errs ? ` ${errs} skipped.` : ''}`, true);
+    $('watchProducts').value = ''; $('watchPins').value = ''; $('watchNotifyTo').value = '';
+    watchCities.clear(); renderWatchCityCount();
+    renderCityChecklist($('watchCityList'), watchCities, $('watchCitySearch').value);
+    await loadWatches();
+  } catch (e) {
+    if (e.status === 401) { currentUser = null; applyAuthUI(); closeWatches(); return; }
+    showWatchesMsg(e.message, false);
+  } finally { btn.disabled = false; }
+}
+
+async function testWhatsapp() {
+  clearWatchesMsg();
+  const to = $('waTestTo').value.trim();
+  const btn = $('waTestBtn'); btn.disabled = true;
+  try {
+    const data = await apiJson('/api/watches/test-whatsapp', { method: 'POST', body: JSON.stringify(to ? { to } : {}) });
+    showWatchesMsg(data.ok ? 'Test sent ✅ — check WhatsApp.' : ('Test failed: ' + (data.detail || 'unknown')), !!data.ok);
+  } catch (e) { showWatchesMsg(e.message, false); }
+  finally { btn.disabled = false; }
+}
+
+function openWatches() {
+  populateWatchPlatforms();
+  renderWatchCityCount();
+  renderCityChecklist($('watchCityList'), watchCities, '');
+  clearWatchesMsg();
+  $('watchesModal').classList.add('open');
+  loadWatches();
+  if (watchesTimer) clearInterval(watchesTimer);
+  watchesTimer = setInterval(loadWatches, 15000); // live status refresh
+}
+function closeWatches() {
+  $('watchesModal').classList.remove('open');
+  if (watchesTimer) { clearInterval(watchesTimer); watchesTimer = null; }
+}
+
+$('watchesBtn').addEventListener('click', openWatches);
+$('watchesClose').addEventListener('click', closeWatches);
+$('watchesModal').addEventListener('click', (e) => { if (e.target === $('watchesModal')) closeWatches(); });
+$('watchAddBtn').addEventListener('click', addWatch);
+$('watchRefresh').addEventListener('click', loadWatches);
+$('waTestBtn').addEventListener('click', testWhatsapp);
+$('watchCitySearch').addEventListener('input', (e) => renderCityChecklist($('watchCityList'), watchCities, e.target.value));
+$('watchCityClear').addEventListener('click', () => {
+  watchCities.clear(); renderWatchCityCount();
+  renderCityChecklist($('watchCityList'), watchCities, $('watchCitySearch').value);
+});
+$('watchCityList').addEventListener('change', renderWatchCityCount);
+
 $('runBtn').addEventListener('click', run);
-$('stopBtn').addEventListener('click', () => controller && controller.abort());
+$('stopBtn').addEventListener('click', async () => {
+  if (!activeJobId) return;
+  setStatus('<span class="spin"></span><span>Stopping…</span>');
+  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: activeJobId }) }); }
+  catch (_) {}
+  // The poll loop will notice the 'canceled' status and finalize the results.
+});
 $('csvBtn').addEventListener('click', exportCSV);
 setLocMode('cities');
 updatePinCount();
