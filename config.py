@@ -137,6 +137,9 @@ WATCH_PAUSE_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_SEC", "1.5"))
 # When to alert:
 #   "change"       -> any meaningful status change (in stock <-> out of stock ...)
 #   "availability" -> only when it (re)enters stock
+#   "price_drop"   -> when the item is in stock AND its price is lower than the
+#                     previously recorded price. The first check has no
+#                     baseline, so it never alerts.
 WATCH_NOTIFY_ON = os.environ.get("STOCKLY_WATCH_NOTIFY_ON", "change").strip().lower()
 # Transient errors (WAF/geocode/network) never overwrite a good state or alert;
 # after this many consecutive errors the worker sends one "can't check" heads-up.

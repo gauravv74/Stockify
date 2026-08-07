@@ -22,6 +22,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import re
 import signal
 import time
 
@@ -102,6 +103,21 @@ def _check_platform(platform, session, q, lat, lon, pin):
     }
 
 
+def _parse_price(value):
+    """Coerce a platform price into a float for comparison.
+
+    Handles the various shapes scrapers return: ``"₹499"``, ``"1,299.00"``,
+    numbers, or None/"" (unknown -> None, never treated as a drop).
+    """
+    if value in (None, ""):
+        return None
+    try:
+        cleaned = re.sub(r"[^\d.]", "", str(value))
+        return float(cleaned) if cleaned else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _fmt_price(row):
     price, mrp = row.get("price"), row.get("mrp")
     if price in (None, "") and mrp in (None, ""):
@@ -114,12 +130,23 @@ def _fmt_price(row):
     return out.strip(" ·")
 
 
-def _build_message(watch, status, row, first_seen):
+def _fmt_drop(prev_price, new_price):
+    """Human 'was → now (−x%)' line for a price drop, or '' if not a drop."""
+    if prev_price is None or new_price is None or new_price >= prev_price:
+        return ""
+    pct = (prev_price - new_price) / prev_price * 100 if prev_price else 0
+    return f"💸 ₹{prev_price:g} → ₹{new_price:g} (−{pct:.0f}%)"
+
+
+def _build_message(watch, status, row, first_seen, prev_price=None, new_price=None):
     plat = PLATFORM_LABEL.get(watch["platform"], watch["platform"].title())
     label = STATUS_LABEL.get(status, status.upper())
     name = row.get("name") or watch["product"]
     place = watch.get("place") or watch["pincode"]
     lines = [f"{label} — {plat}", name]
+    drop = _fmt_drop(prev_price, new_price)
+    if drop:
+        lines.append(drop)
     price = _fmt_price(row)
     if price:
         lines.append(price)
@@ -134,22 +161,40 @@ def _build_message(watch, status, row, first_seen):
     return "\n".join(lines)
 
 
-def _should_notify(prev_status, prev_available, new_status, new_available):
+def _should_notify(prev_status, prev_available, new_status, new_available,
+                   prev_price=None, new_price=None):
     """Decide whether this transition warrants an alert.
 
-    Returns True on a genuine change. First observation (prev_status is None) is
-    reported so you get an immediate baseline, then only real changes after.
+    Returns ``(notify, changed, first_seen)``. First observation
+    (prev_status is None) never fires in price_drop mode (no baseline to
+    compare); in the other modes it's reported as an immediate baseline.
     """
     first_seen = prev_status is None
-    changed = (new_status != prev_status) or (bool(new_available) != bool(prev_available))
-    if not changed:
+    status_changed = (
+        (new_status != prev_status) or (bool(new_available) != bool(prev_available))
+    )
+
+    if config.WATCH_NOTIFY_ON == "price_drop":
+        # Alert when the item is IN STOCK and its price is strictly below the
+        # previously recorded price. Missing prices on either side mean
+        # "unknown", so we never alert on them.
+        price_dropped = (
+            prev_price is not None and new_price is not None and new_price < prev_price
+        )
+        price_changed = (
+            prev_price is not None and new_price is not None and new_price != prev_price
+        )
+        notify = bool(new_available) and price_dropped
+        return notify, (status_changed or price_changed), first_seen
+
+    if not status_changed:
         return False, False, first_seen
     if config.WATCH_NOTIFY_ON == "availability":
         # Only when it (re)enters stock.
         notify = bool(new_available) and not bool(prev_available)
     else:  # "change" — any meaningful status flip
         notify = True
-    return notify, changed, first_seen
+    return notify, status_changed, first_seen
 
 
 def _process_watch(watch, session, cache):
@@ -191,19 +236,22 @@ def _process_watch(watch, session, cache):
     # 4) change detection + notification
     prev_status = watch.get("last_status")
     prev_available = watch.get("last_available")
+    prev_price = _parse_price(watch.get("last_price"))
+    new_price = _parse_price(row.get("price"))
     notify, changed, first_seen = _should_notify(
-        prev_status, prev_available, status, available)
+        prev_status, prev_available, status, available, prev_price, new_price)
 
     notified = False
     if notify:
-        msg = _build_message(watch, status, row, first_seen)
+        msg = _build_message(watch, status, row, first_seen, prev_price, new_price)
         to = watch.get("notify_to") or None
         ok, detail = whatsapp.send(msg, to=to)
         notified = ok
         if not ok:
             log.warning("watch %s: alert NOT delivered: %s", wid, detail)
 
-    watches.record_result(wid, status, available, row, changed, notified)
+    watches.record_result(wid, status, available, row, changed, notified,
+                          price=new_price)
     log.info("watch %s (%s/%s @%s): %s->%s changed=%s notified=%s",
              wid, platform, q, pin, prev_status, status, changed, notified)
 

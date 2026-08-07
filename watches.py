@@ -85,6 +85,13 @@ def init_db() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_watches_active "
                 "ON watches(active, last_checked_at)"
             )
+            # Migration: numeric price of the last non-transient check, used by
+            # the "price_drop" notify mode to compare against the current price.
+            # ALTER is a no-op-with-guard so existing DBs upgrade in place.
+            try:
+                conn.execute("ALTER TABLE watches ADD COLUMN last_price REAL")
+            except sqlite3.OperationalError:
+                pass  # column already exists
         _initialized = True
 
 
@@ -216,11 +223,16 @@ def save_geo(watch_id, lat, lon, place):
         )
 
 
-def record_result(watch_id, status, available, detail, changed, notified):
+def record_result(watch_id, status, available, detail, changed, notified,
+                  price=None):
     """Persist the outcome of one check.
 
     Transient statuses only bump the error streak + last_checked_at; they never
     clobber the last good state, so a WAF blip can't produce a false alert.
+
+    ``price`` (a parsed float, or None) becomes the new baseline the next
+    ``price_drop`` comparison uses. A None price leaves the stored value alone
+    so a platform that omits price can't wipe the last known one.
     """
     now = _now()
     detail_json = json.dumps(detail) if detail is not None else None
@@ -240,6 +252,9 @@ def record_result(watch_id, status, available, detail, changed, notified):
             "error_streak = 0",
         ]
         params = [status, (1 if available else 0), detail_json, now]
+        if price is not None:
+            sets.append("last_price = ?")
+            params.append(price)
         if changed:
             sets.append("last_change_at = ?")
             params.append(now)
