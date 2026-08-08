@@ -572,6 +572,33 @@
   .watch-cities { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
   .watch-cities summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
   .watches-empty { padding: 20px 8px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* WhatsApp connection card — one clean status line + reconnect */
+  .wa-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 0 0 16px; background: var(--surface); }
+  .wa-card-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .wa-card-main .wa-status { font-size: 14px; }
+  .wa-card-actions { display: flex; align-items: center; gap: 14px; }
+  .wa-test-row, .wa-manage-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .wa-test-row input { height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; flex: 1; min-width: 160px; }
+  #waQrWrap { margin-top: 14px; text-align: center; }
+  #waQrImg { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 6px; }
+  .link-btn.danger { color: var(--red); }
+
+  /* Alert settings — tucked into a collapsible */
+  .watch-settings { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; }
+  .watch-settings > summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); list-style: none; }
+  .watch-settings > summary::-webkit-details-marker { display: none; }
+  .watch-settings > summary::before { content: '\2699  '; }
+  .settings-body { margin-top: 12px; }
+  .wa-select { height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; background: var(--surface); flex: 1; min-width: 200px; }
+  .wa-num { width: 72px; height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; background: var(--surface); }
+
+  /* Grouped watches — one summary row per product, expandable to locations */
+  .watches-table tr.wgroup { cursor: pointer; }
+  .watches-table tr.wgroup:hover, .watches-table tr.wgroup.open { background: var(--gray-bg); }
+  .wcaret { display: inline-block; width: 14px; color: var(--muted); font-size: 11px; transition: transform .12s; }
+  .watches-table tr.wdetail > td:first-child { padding-left: 22px; }
+  .wloc .switch { margin-right: 8px; vertical-align: middle; }
 </style>
 </head>
 <body class="locked">
@@ -821,51 +848,59 @@
     <div class="modal-body">
       <div class="admin-msg" id="watchesMsg"></div>
 
-      <div class="wa-banner" id="waBanner">
-        <div class="wa-status" id="waStatus">Checking WhatsApp status…</div>
-        <div class="wa-actions">
+      <!-- WhatsApp connection: one clean status line + reconnect -->
+      <div class="wa-card" id="waCard">
+        <div class="wa-card-main">
+          <div class="wa-status" id="waStatus">Checking WhatsApp…</div>
+          <div class="wa-card-actions">
+            <button type="button" class="btn btn-primary" id="waReconnectBtn" style="display:none;">Reconnect WhatsApp</button>
+            <button type="button" class="link-btn" id="waTestToggle">Send test</button>
+            <button type="button" class="link-btn admin-only-wa" id="waManageToggle" style="display:none;">Manage</button>
+          </div>
+        </div>
+
+        <!-- Test send (hidden until "Send test") -->
+        <div class="wa-test-row" id="waTestRow" style="display:none;">
           <input type="text" id="waTestTo" placeholder="test number (optional)" autocomplete="off" />
-          <button type="button" class="btn" id="waTestBtn">Send test</button>
+          <button type="button" class="btn" id="waTestBtn">Send</button>
+        </div>
+
+        <!-- QR (shown only while (re)linking) -->
+        <div id="waQrWrap" style="display:none;">
+          <div class="hint" style="margin-bottom:8px;">On the sending phone: <strong>WhatsApp → Linked Devices → Link a Device</strong>, then scan:</div>
+          <img id="waQrImg" alt="WhatsApp pairing QR" width="220" height="220" />
+          <div class="hint" id="waQrHint" style="margin-top:8px;">Waiting for scan…</div>
+        </div>
+
+        <!-- Admin: manage the sending account (hidden until "Manage") -->
+        <div class="wa-manage-row admin-only-wa" id="waManageRow" style="display:none;">
+          <button type="button" class="link-btn" id="waRefreshBtn">Refresh status</button>
+          <button type="button" class="link-btn danger" id="waLogoutBtn">Log out / relink account</button>
         </div>
       </div>
 
-      <!-- Admin-only: global alert mode + WhatsApp Web sending account -->
-      <div class="panel" id="waAdminPanel" style="display:none; box-shadow:none; margin:0 0 16px; border:1px solid var(--border); border-radius:10px;">
-        <div class="panel-head"><h2>Admin · Alerts &amp; WhatsApp account</h2></div>
-        <div class="panel-body">
+      <!-- Alert settings: tucked into a collapsible for admins -->
+      <details class="watch-settings admin-only-wa" id="alertSettings" style="display:none;">
+        <summary>Alert settings</summary>
+        <div class="settings-body">
           <div class="field" style="margin:0;">
-            <label for="alertMode">Global alert mode</label>
+            <label for="alertMode">When to notify</label>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <select id="alertMode" style="height:40px; border:1px solid var(--border); border-radius:8px; padding:0 10px; background:var(--surface); flex:1; min-width:220px;">
-                <option value="threshold">Threshold — alert when price ≤ target</option>
-                <option value="price_drop">Price drop — alert on any drop vs last price</option>
-                <option value="availability">Availability — alert when back in stock</option>
-                <option value="change">Change — any status change</option>
+              <select id="alertMode" class="wa-select">
+                <option value="threshold">Price drops to my target</option>
+                <option value="price_drop">Price drops at all (vs last check)</option>
+                <option value="availability">Item comes back in stock</option>
+                <option value="change">Any status change</option>
               </select>
+              <label for="alertInterval" style="margin:0; text-transform:none; letter-spacing:0; font-weight:600;">every</label>
+              <input type="number" id="alertInterval" min="1" step="1" value="60" class="wa-num" />
+              <span class="sub">min</span>
               <button type="button" class="btn" id="alertModeSave">Save</button>
             </div>
-            <div class="hint" id="alertModeHint">In threshold mode, set a target per product (e.g. <code>oppo k14 6/128 @14300</code>) or use the Target price field below.</div>
-          </div>
-
-          <div class="field" style="margin-top:12px;">
-            <label for="alertInterval">Check every (minutes)</label>
-            <input type="number" id="alertInterval" min="1" step="1" value="60" style="width:120px; height:40px; border:1px solid var(--border); border-radius:8px; padding:0 10px; background:var(--surface);" />
-          </div>
-
-          <div class="field" style="margin-top:14px;">
-            <label>WhatsApp Web sending account</label>
-            <div class="wa-status" id="waAccountStatus">Checking…</div>
-            <div id="waQrWrap" style="display:none; margin-top:10px; text-align:center;">
-              <div class="hint" style="margin-bottom:6px;">On the sending phone: WhatsApp → Linked Devices → Link a Device, then scan:</div>
-              <img id="waQrImg" alt="WhatsApp pairing QR" width="240" height="240" style="border:1px solid var(--border); border-radius:8px; background:#fff;" />
-            </div>
-            <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-              <button type="button" class="btn" id="waRefreshBtn">Refresh status</button>
-              <button type="button" class="btn" id="waLogoutBtn">Relink / Log out</button>
-            </div>
+            <div class="hint" id="alertModeHint">Applies to every watch. Set a per-product target with <code>@price</code> (e.g. <code>oppo k14 @14300</code>).</div>
           </div>
         </div>
-      </div>
+      </details>
 
       <div class="panel" style="box-shadow:none; margin:12px 0 16px;">
         <div class="panel-head"><h2>Add a watch</h2></div>
@@ -915,17 +950,15 @@
         <button type="button" class="link-btn" id="watchRefresh">Refresh</button>
       </div>
       <div class="table-scroll" style="max-height:none;">
-        <table class="users-table" id="watchesTable">
+        <table class="users-table watches-table" id="watchesTable">
           <thead>
             <tr>
               <th>Product</th>
-              <th>Location</th>
-              <th style="width:96px;">Platform</th>
-              <th style="width:120px;">Status</th>
+              <th style="width:110px;">Platform</th>
+              <th style="width:140px;">Status</th>
               <th style="width:90px;">Target</th>
               <th style="width:120px;">Checked</th>
-              <th style="width:60px;">On</th>
-              <th style="width:56px;"></th>
+              <th style="width:70px;"></th>
             </tr>
           </thead>
           <tbody id="watchesTbody"></tbody>
@@ -2349,30 +2382,86 @@ function populateWatchPlatforms() {
 
 function renderWatchCityCount() { $('watchCityCount').textContent = watchCities.size + ' selected'; }
 
+function fmtTarget(v) {
+  return v != null ? '₹' + Number(v).toLocaleString('en-IN') : '—';
+}
+
+// Group watches by product + platform so the list stays short: one summary row
+// per product, expandable to the individual locations behind it.
 function renderWatches(list) {
   $('watchListCount').textContent = list.length;
   const tb = $('watchesTbody');
   if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="8"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
     return;
   }
-  tb.innerHTML = list.map(w => {
-    const status = w.last_status || '';
-    const badge = status
-      ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
-      : '<span class="sub">pending</span>';
-    const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
-    return `<tr data-id="${w.id}">
-      <td><span class="uname">${escHtml(w.product)}</span><div class="sub">${escHtml(w.pincode)}</div></td>
-      <td>${escHtml(w.place || w.pincode)}</td>
-      <td>${escHtml(PLAT_LABEL[w.platform] || w.platform)}</td>
-      <td>${badge}</td>
-      <td class="sub">${w.price_threshold != null ? '₹' + Number(w.price_threshold).toLocaleString('en-IN') : '—'}</td>
-      <td class="sub">${checked}</td>
-      <td><span class="switch"><input type="checkbox" data-act="toggle" ${w.active ? 'checked' : ''} /><span class="slider"></span></span></td>
-      <td><button type="button" class="link-btn" data-act="del">Delete</button></td>
+
+  const groups = new Map();
+  for (const w of list) {
+    const key = (w.platform || '') + '\u0000' + String(w.product || '').toLowerCase();
+    if (!groups.has(key)) groups.set(key, { product: w.product, platform: w.platform, items: [] });
+    groups.get(key).items.push(w);
+  }
+
+  let html = '';
+  let gi = 0;
+  for (const g of groups.values()) {
+    const items = g.items;
+    const total = items.length;
+    const inStock = items.filter(w => w.last_status === 'available').length;
+    const anyChecked = items.some(w => w.last_status);
+    const activeCount = items.filter(w => w.active).length;
+    const times = items.map(w => w.last_checked_at).filter(Boolean).sort();
+    const lastChecked = times.length ? fmtWhen(times[times.length - 1]) : '<span class="sub">never</span>';
+
+    let sumBadge;
+    if (!anyChecked) sumBadge = '<span class="sub">pending</span>';
+    else if (inStock > 0) sumBadge = `<span class="badge b-available">${inStock}/${total} in stock</span>`;
+    else sumBadge = `<span class="badge b-out_of_stock">0/${total} in stock</span>`;
+
+    const thr = [...new Set(items.map(w => w.price_threshold).filter(v => v != null))];
+    const targetTxt = thr.length === 1 ? fmtTarget(thr[0]) : (thr.length ? 'mixed' : '—');
+
+    const gid = 'g' + (gi++);
+    html += `<tr class="wgroup" data-gid="${gid}">
+      <td><span class="wcaret">▸</span> <span class="uname">${escHtml(g.product)}</span><div class="sub">${total} location${total === 1 ? '' : 's'} · ${activeCount} on</div></td>
+      <td>${escHtml(PLAT_LABEL[g.platform] || g.platform)}</td>
+      <td>${sumBadge}</td>
+      <td class="sub">${targetTxt}</td>
+      <td class="sub">${lastChecked}</td>
+      <td></td>
     </tr>`;
-  }).join('');
+
+    for (const w of items) {
+      const status = w.last_status || '';
+      const badge = status
+        ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
+        : '<span class="sub">pending</span>';
+      const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
+      html += `<tr class="wdetail wd-${gid}" data-id="${w.id}" style="display:none;">
+        <td class="wloc"><span class="switch"><input type="checkbox" data-act="toggle" ${w.active ? 'checked' : ''} /><span class="slider"></span></span>${escHtml(w.place || w.pincode)}<div class="sub">${escHtml(w.pincode)}</div></td>
+        <td></td>
+        <td>${badge}</td>
+        <td class="sub">${fmtTarget(w.price_threshold)}</td>
+        <td class="sub">${checked}</td>
+        <td><button type="button" class="link-btn danger" data-act="del">Delete</button></td>
+      </tr>`;
+    }
+  }
+  tb.innerHTML = html;
+
+  // Expand / collapse a product group.
+  tb.querySelectorAll('tr.wgroup').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act]')) return;
+      const gid = row.dataset.gid;
+      const open = row.classList.toggle('open');
+      const caret = row.querySelector('.wcaret');
+      if (caret) caret.textContent = open ? '▾' : '▸';
+      tb.querySelectorAll('.wd-' + gid).forEach(d => { d.style.display = open ? '' : 'none'; });
+    });
+  });
+
   tb.querySelectorAll('input[data-act="toggle"]').forEach(cb => {
     cb.addEventListener('change', async () => {
       const id = cb.closest('tr').dataset.id;
@@ -2394,24 +2483,42 @@ const MODE_LABEL = {
   availability: 'back in stock', change: 'any change',
 };
 
+// Cached alert summary (mode + interval) used to enrich the connected status.
+let waModeLabel = '';
+let waInterval = null;
+// Reconnect state: when true we poll the bridge and reveal the QR as it arrives.
+let waReconnecting = false;
+let waQrTimer = null;
+
 async function loadWatches() {
   try {
     const data = await apiJson('/api/watches');
     const wa = data.whatsapp || {};
     const mode = wa.notify_on || 'price_drop';
-    const st = $('waStatus');
-    st.classList.toggle('ok', !!wa.configured);
-    st.classList.toggle('bad', !wa.configured);
-    st.textContent = wa.configured
-      ? `WhatsApp ready · via ${wa.provider} · alerts on “${MODE_LABEL[mode] || mode}” · every ${data.interval_min} min`
-      : `WhatsApp not configured (provider: ${wa.provider}) — alerts won’t be delivered`;
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    waModeLabel = MODE_LABEL[mode] || mode;
+    waInterval = data.interval_min;
+
+    // Non-admins just get a simple ready/not-ready line (they can't manage the
+    // account); admins get the richer live status from loadAdminWaStatus().
+    if (!isAdmin) {
+      const st = $('waStatus');
+      st.classList.toggle('ok', !!wa.configured);
+      st.classList.toggle('bad', !wa.configured);
+      st.textContent = wa.configured
+        ? `WhatsApp alerts on · “${waModeLabel}” · every ${data.interval_min} min`
+        : 'WhatsApp not set up yet — alerts won’t be delivered';
+    }
+
     // Show the per-product target field when the global mode is threshold.
     $('watchThresholdField').style.display = (mode === 'threshold') ? '' : 'none';
     renderWatches(data.watches || []);
 
-    // Admin-only management panel.
-    const isAdmin = currentUser && currentUser.role === 'admin';
-    $('waAdminPanel').style.display = isAdmin ? '' : 'none';
+    // Admin-only controls (settings + account management).
+    document.querySelectorAll('.admin-only-wa').forEach(el => {
+      if (el.id === 'waManageRow' || el.id === 'waTestRow') return; // toggled by their buttons
+      el.style.display = isAdmin ? '' : 'none';
+    });
     if (isAdmin) {
       $('alertMode').value = mode;
       if (data.interval_min) $('alertInterval').value = data.interval_min;
@@ -2423,30 +2530,63 @@ async function loadWatches() {
   }
 }
 
+function showWaQr() {
+  $('waQrImg').src = '/api/admin/whatsapp/qr?t=' + Date.now();
+  $('waQrWrap').style.display = '';
+}
+function startQrPolling() {
+  if (waQrTimer) clearInterval(waQrTimer);
+  waQrTimer = setInterval(loadAdminWaStatus, 3000);
+}
+function stopQrPolling() {
+  if (waQrTimer) { clearInterval(waQrTimer); waQrTimer = null; }
+  waReconnecting = false;
+}
+
+// Drives the single status pill + Reconnect button + QR for admins.
 async function loadAdminWaStatus() {
-  const el = $('waAccountStatus');
+  const st = $('waStatus');
+  const reBtn = $('waReconnectBtn');
+  const suffix = waModeLabel ? ` · “${waModeLabel}” · every ${waInterval} min` : '';
+  const setBad = (txt) => { st.classList.remove('ok'); st.classList.add('bad'); st.textContent = txt; };
+  const setOk = (txt) => { st.classList.remove('bad'); st.classList.add('ok'); st.textContent = txt; };
   try {
     const s = await apiJson('/api/admin/whatsapp/status');
     if (s.provider && s.provider !== 'webjs') {
-      el.textContent = `Provider is “${s.provider}” — WhatsApp Web account applies only when provider = webjs.`;
+      setOk(`Alerts via “${s.provider}”${suffix}`);
+      reBtn.style.display = 'none';
       $('waQrWrap').style.display = 'none';
+      stopQrPolling();
       return;
     }
-    if (s.has_qr) {
-      el.textContent = 'Not linked — scan the QR below to link the sending account.';
-      $('waQrImg').src = '/api/admin/whatsapp/qr?t=' + Date.now();
-      $('waQrWrap').style.display = '';
-    } else if (s.ready) {
-      el.textContent = 'Linked ✅' + (s.me ? ' as +' + s.me : '') + ' — ready to send.';
+    if (s.ready) {
+      setOk(`WhatsApp connected${s.me ? ' · +' + s.me : ''}${suffix}`);
+      reBtn.style.display = 'none';
       $('waQrWrap').style.display = 'none';
+      if (waReconnecting) { stopQrPolling(); showWatchesMsg('WhatsApp linked ✅', true); }
+    } else if (s.has_qr) {
+      setBad('WhatsApp not linked — tap “Reconnect” and scan the QR.');
+      reBtn.style.display = '';
+      if (waReconnecting) { showWaQr(); $('waQrHint').textContent = 'Waiting for you to scan…'; }
     } else {
-      el.textContent = 'State: ' + (s.state || 'starting') + '…';
-      $('waQrWrap').style.display = 'none';
+      setBad('WhatsApp disconnected (' + (s.state || 'starting') + ') — tap “Reconnect”.');
+      reBtn.style.display = '';
+      if (waReconnecting) { $('waQrWrap').style.display = ''; $('waQrImg') && ($('waQrImg').removeAttribute('src')); $('waQrHint').textContent = 'Reconnecting… a QR will appear if a scan is needed.'; }
+      else $('waQrWrap').style.display = 'none';
     }
   } catch (e) {
-    el.textContent = 'Bridge unreachable: ' + e.message;
-    $('waQrWrap').style.display = 'none';
+    setBad('WhatsApp bridge unreachable — ' + e.message);
+    reBtn.style.display = '';
   }
+}
+
+async function waReconnect() {
+  clearWatchesMsg();
+  waReconnecting = true;
+  $('waQrWrap').style.display = '';
+  $('waQrHint').textContent = 'Connecting…';
+  startQrPolling();
+  await loadAdminWaStatus();
 }
 
 async function saveAlertMode() {
@@ -2470,8 +2610,13 @@ async function waLogout() {
   clearWatchesMsg();
   try {
     await apiJson('/api/admin/whatsapp/logout', { method: 'POST', body: '{}' });
-    showWatchesMsg('Logged out — a new QR will appear shortly.', true);
-    setTimeout(loadAdminWaStatus, 2500);
+    showWatchesMsg('Logged out — scan the new QR to relink.', true);
+    // Enter reconnect mode so the fresh QR is revealed automatically.
+    waReconnecting = true;
+    $('waQrWrap').style.display = '';
+    $('waQrHint').textContent = 'Generating a new QR…';
+    startQrPolling();
+    setTimeout(loadAdminWaStatus, 1500);
   } catch (e) { showWatchesMsg(e.message, false); }
   finally { btn.disabled = false; }
 }
@@ -2529,6 +2674,7 @@ function openWatches() {
 function closeWatches() {
   $('watchesModal').classList.remove('open');
   if (watchesTimer) { clearInterval(watchesTimer); watchesTimer = null; }
+  stopQrPolling();
 }
 
 $('watchesBtn').addEventListener('click', openWatches);
@@ -2540,6 +2686,15 @@ $('waTestBtn').addEventListener('click', testWhatsapp);
 $('alertModeSave').addEventListener('click', saveAlertMode);
 $('waRefreshBtn').addEventListener('click', loadAdminWaStatus);
 $('waLogoutBtn').addEventListener('click', waLogout);
+$('waReconnectBtn').addEventListener('click', waReconnect);
+$('waTestToggle').addEventListener('click', () => {
+  const r = $('waTestRow');
+  r.style.display = (r.style.display === 'none' || !r.style.display) ? 'flex' : 'none';
+});
+$('waManageToggle').addEventListener('click', () => {
+  const r = $('waManageRow');
+  r.style.display = (r.style.display === 'none' || !r.style.display) ? 'flex' : 'none';
+});
 $('watchCitySearch').addEventListener('input', (e) => renderCityChecklist($('watchCityList'), watchCities, e.target.value));
 $('watchCityClear').addEventListener('click', () => {
   watchCities.clear(); renderWatchCityCount();
