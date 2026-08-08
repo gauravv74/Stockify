@@ -104,16 +104,28 @@ def _send_meta(message: str, to: str) -> tuple[bool, str]:
     return False, f"meta http={r.status_code} body={(r.text or '')[:180]}"
 
 
+def _bridge_url() -> str:
+    """Bridge base URL: a runtime setting (set by the admin panel) overrides the
+    env default so the web container can reach the wa-bridge service by name
+    even though only the worker service sets the env var."""
+    try:
+        import watches
+        return (watches.get_setting("wa_bridge_url") or config.WA_BRIDGE_URL)
+    except Exception:
+        return config.WA_BRIDGE_URL
+
+
 def _send_webjs(message: str, to: str) -> tuple[bool, str]:
     phone = _clean_phone(to or config.WHATSAPP_TO)
-    if not config.WA_BRIDGE_URL or not phone:
+    base = _bridge_url()
+    if not base or not phone:
         return False, "webjs bridge not configured (need bridge url + recipient)"
     headers = {}
     if config.WA_BRIDGE_TOKEN:
         headers["X-Auth-Token"] = config.WA_BRIDGE_TOKEN
     try:
         r = requests.post(
-            config.WA_BRIDGE_URL.rstrip("/") + "/send",
+            base.rstrip("/") + "/send",
             json={"to": phone, "message": message},
             headers=headers, timeout=TIMEOUT,
         )
