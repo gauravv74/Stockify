@@ -886,8 +886,9 @@ def api_test_whatsapp():
     to = (payload.get("to") or "").strip() or None
     ok, detail = whatsapp.send(
         "Stockly ✅ test alert — WhatsApp notifications are wired up.", to=to)
-    return jsonify({"ok": ok, "detail": detail, "provider": config.WHATSAPP_PROVIDER}), (
-        200 if ok else 502)
+    # Always 200 so the UI can surface the real reason (the frontend reads
+    # {ok, detail}); a 502 here just showed a bare "HTTP 502" to the user.
+    return jsonify({"ok": ok, "detail": detail, "provider": config.WHATSAPP_PROVIDER})
 
 
 # ---------------------------------------------------------------------------
