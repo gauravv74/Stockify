@@ -536,6 +536,12 @@ def _run_check_job(job_id, pincodes, products, platforms,
                     canceled = True
                     break
                 for plat in platforms:
+                    # Cooperative cancel between platforms too, so Stop reacts
+                    # after the single in-flight check instead of finishing the
+                    # whole platform set for this product.
+                    if jobs.is_canceled(job_id):
+                        canceled = True
+                        break
                     idx += 1
                     row = _blank_row(idx, pin, place, lat, lon, q, plat)
                     try:
