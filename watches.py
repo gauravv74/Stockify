@@ -92,7 +92,65 @@ def init_db() -> None:
                 conn.execute("ALTER TABLE watches ADD COLUMN last_price REAL")
             except sqlite3.OperationalError:
                 pass  # column already exists
+            # Migration: optional per-watch target price. In "threshold" notify
+            # mode the worker alerts when an in-stock price is <= this value.
+            try:
+                conn.execute("ALTER TABLE watches ADD COLUMN price_threshold REAL")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            # Runtime-editable settings (key/value), so an admin can change the
+            # global alert mode from the UI without a redeploy.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+                """
+            )
         _initialized = True
+
+
+def get_setting(key, default=None):
+    """Read a runtime setting, or ``default`` if unset."""
+    if not _initialized:
+        init_db()
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key, value):
+    """Persist a runtime setting."""
+    if not _initialized:
+        init_db()
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, None if value is None else str(value)),
+        )
+
+
+# Alert modes the UI exposes as a single global choice.
+NOTIFY_MODES = ("threshold", "price_drop", "availability", "change")
+
+
+def get_notify_mode():
+    """Current global alert mode: DB setting overrides the env/config default."""
+    mode = (get_setting("notify_on") or config.WATCH_NOTIFY_ON or "price_drop").strip().lower()
+    return mode if mode in NOTIFY_MODES else "price_drop"
+
+
+def get_interval_min():
+    """Re-check interval in minutes: DB setting overrides the env/config default."""
+    try:
+        val = int(get_setting("interval_min") or config.WATCH_INTERVAL_MIN)
+    except (TypeError, ValueError):
+        val = config.WATCH_INTERVAL_MIN
+    return max(1, val)
 
 
 def _row_to_watch(row) -> dict | None:
@@ -107,7 +165,7 @@ def _row_to_watch(row) -> dict | None:
     return d
 
 
-def add_watch(user, platform, product, pincode, notify_to=None):
+def add_watch(user, platform, product, pincode, notify_to=None, price_threshold=None):
     """Create (or re-activate) a watch. Returns (watch, error)."""
     platform = (platform or "instamart").strip().lower()
     product = (product or "").strip()
@@ -120,17 +178,23 @@ def add_watch(user, platform, product, pincode, notify_to=None):
     uname = (user or {}).get("username")
     notify_to = (notify_to or "").strip() or None
     try:
+        price_threshold = float(price_threshold) if price_threshold not in (None, "") else None
+    except (TypeError, ValueError):
+        price_threshold = None
+    try:
         with _conn() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO watches
                     (user_id, username, platform, product, pincode, notify_to,
-                     active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                     price_threshold, active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(user_id, platform, product, pincode)
-                DO UPDATE SET active = 1, notify_to = excluded.notify_to
+                DO UPDATE SET active = 1, notify_to = excluded.notify_to,
+                              price_threshold = excluded.price_threshold
                 """,
-                (uid, uname, platform, product, pincode, notify_to, _now()),
+                (uid, uname, platform, product, pincode, notify_to,
+                 price_threshold, _now()),
             )
             wid = cur.lastrowid
             if not wid:

@@ -829,6 +829,44 @@
         </div>
       </div>
 
+      <!-- Admin-only: global alert mode + WhatsApp Web sending account -->
+      <div class="panel" id="waAdminPanel" style="display:none; box-shadow:none; margin:0 0 16px; border:1px solid var(--border); border-radius:10px;">
+        <div class="panel-head"><h2>Admin · Alerts &amp; WhatsApp account</h2></div>
+        <div class="panel-body">
+          <div class="field" style="margin:0;">
+            <label for="alertMode">Global alert mode</label>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <select id="alertMode" style="height:40px; border:1px solid var(--border); border-radius:8px; padding:0 10px; background:var(--surface); flex:1; min-width:220px;">
+                <option value="threshold">Threshold — alert when price ≤ target</option>
+                <option value="price_drop">Price drop — alert on any drop vs last price</option>
+                <option value="availability">Availability — alert when back in stock</option>
+                <option value="change">Change — any status change</option>
+              </select>
+              <button type="button" class="btn" id="alertModeSave">Save</button>
+            </div>
+            <div class="hint" id="alertModeHint">In threshold mode, set a target per product (e.g. <code>oppo k14 6/128 @14300</code>) or use the Target price field below.</div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label for="alertInterval">Check every (minutes)</label>
+            <input type="number" id="alertInterval" min="1" step="1" value="60" style="width:120px; height:40px; border:1px solid var(--border); border-radius:8px; padding:0 10px; background:var(--surface);" />
+          </div>
+
+          <div class="field" style="margin-top:14px;">
+            <label>WhatsApp Web sending account</label>
+            <div class="wa-status" id="waAccountStatus">Checking…</div>
+            <div id="waQrWrap" style="display:none; margin-top:10px; text-align:center;">
+              <div class="hint" style="margin-bottom:6px;">On the sending phone: WhatsApp → Linked Devices → Link a Device, then scan:</div>
+              <img id="waQrImg" alt="WhatsApp pairing QR" width="240" height="240" style="border:1px solid var(--border); border-radius:8px; background:#fff;" />
+            </div>
+            <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+              <button type="button" class="btn" id="waRefreshBtn">Refresh status</button>
+              <button type="button" class="btn" id="waLogoutBtn">Relink / Log out</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="panel" style="box-shadow:none; margin:12px 0 16px;">
         <div class="panel-head"><h2>Add a watch</h2></div>
         <div class="panel-body">
@@ -839,7 +877,7 @@
             </div>
             <div class="field" style="margin:0;">
               <label for="watchProducts">Product(s)</label>
-              <input type="text" id="watchProducts" placeholder="amul gold milk, iphone 17" autocomplete="off" />
+              <input type="text" id="watchProducts" placeholder="amul gold milk, oppo k14 6/128 @14300" autocomplete="off" />
             </div>
           </div>
           <div class="field" style="margin-top:12px;">
@@ -862,6 +900,12 @@
             <input type="text" id="watchNotifyTo" placeholder="defaults to configured number" autocomplete="off" />
           </div>
 
+          <div class="field" id="watchThresholdField" style="margin-top:12px; display:none;">
+            <label for="watchThreshold">Target price <span class="count">optional</span></label>
+            <input type="text" id="watchThreshold" placeholder="e.g. 14300 — alert when at/below this" autocomplete="off" inputmode="numeric" />
+            <div class="hint">Applies to products without an inline <code>@price</code>. Tip: you can also write <code>oppo k14 6/128 @14300</code>.</div>
+          </div>
+
           <button type="button" class="btn btn-primary" id="watchAddBtn" style="width:100%; margin-top:14px;">Add watch</button>
         </div>
       </div>
@@ -878,6 +922,7 @@
               <th>Location</th>
               <th style="width:96px;">Platform</th>
               <th style="width:120px;">Status</th>
+              <th style="width:90px;">Target</th>
               <th style="width:120px;">Checked</th>
               <th style="width:60px;">On</th>
               <th style="width:56px;"></th>
@@ -2308,7 +2353,7 @@ function renderWatches(list) {
   $('watchListCount').textContent = list.length;
   const tb = $('watchesTbody');
   if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="7"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
+    tb.innerHTML = `<tr><td colspan="8"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
     return;
   }
   tb.innerHTML = list.map(w => {
@@ -2322,6 +2367,7 @@ function renderWatches(list) {
       <td>${escHtml(w.place || w.pincode)}</td>
       <td>${escHtml(PLAT_LABEL[w.platform] || w.platform)}</td>
       <td>${badge}</td>
+      <td class="sub">${w.price_threshold != null ? '₹' + Number(w.price_threshold).toLocaleString('en-IN') : '—'}</td>
       <td class="sub">${checked}</td>
       <td><span class="switch"><input type="checkbox" data-act="toggle" ${w.active ? 'checked' : ''} /><span class="slider"></span></span></td>
       <td><button type="button" class="link-btn" data-act="del">Delete</button></td>
@@ -2343,21 +2389,91 @@ function renderWatches(list) {
   });
 }
 
+const MODE_LABEL = {
+  threshold: 'price ≤ target', price_drop: 'any price drop',
+  availability: 'back in stock', change: 'any change',
+};
+
 async function loadWatches() {
   try {
     const data = await apiJson('/api/watches');
     const wa = data.whatsapp || {};
+    const mode = wa.notify_on || 'price_drop';
     const st = $('waStatus');
     st.classList.toggle('ok', !!wa.configured);
     st.classList.toggle('bad', !wa.configured);
     st.textContent = wa.configured
-      ? `WhatsApp ready · via ${wa.provider} · alerts on “${wa.notify_on}” · every ${data.interval_min} min`
+      ? `WhatsApp ready · via ${wa.provider} · alerts on “${MODE_LABEL[mode] || mode}” · every ${data.interval_min} min`
       : `WhatsApp not configured (provider: ${wa.provider}) — alerts won’t be delivered`;
+    // Show the per-product target field when the global mode is threshold.
+    $('watchThresholdField').style.display = (mode === 'threshold') ? '' : 'none';
     renderWatches(data.watches || []);
+
+    // Admin-only management panel.
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    $('waAdminPanel').style.display = isAdmin ? '' : 'none';
+    if (isAdmin) {
+      $('alertMode').value = mode;
+      if (data.interval_min) $('alertInterval').value = data.interval_min;
+      loadAdminWaStatus();
+    }
   } catch (e) {
     if (e.status === 401) { currentUser = null; applyAuthUI(); closeWatches(); return; }
     showWatchesMsg(e.message, false);
   }
+}
+
+async function loadAdminWaStatus() {
+  const el = $('waAccountStatus');
+  try {
+    const s = await apiJson('/api/admin/whatsapp/status');
+    if (s.provider && s.provider !== 'webjs') {
+      el.textContent = `Provider is “${s.provider}” — WhatsApp Web account applies only when provider = webjs.`;
+      $('waQrWrap').style.display = 'none';
+      return;
+    }
+    if (s.has_qr) {
+      el.textContent = 'Not linked — scan the QR below to link the sending account.';
+      $('waQrImg').src = '/api/admin/whatsapp/qr?t=' + Date.now();
+      $('waQrWrap').style.display = '';
+    } else if (s.ready) {
+      el.textContent = 'Linked ✅' + (s.me ? ' as +' + s.me : '') + ' — ready to send.';
+      $('waQrWrap').style.display = 'none';
+    } else {
+      el.textContent = 'State: ' + (s.state || 'starting') + '…';
+      $('waQrWrap').style.display = 'none';
+    }
+  } catch (e) {
+    el.textContent = 'Bridge unreachable: ' + e.message;
+    $('waQrWrap').style.display = 'none';
+  }
+}
+
+async function saveAlertMode() {
+  clearWatchesMsg();
+  const mode = $('alertMode').value;
+  const interval = parseInt($('alertInterval').value, 10);
+  const body = { notify_on: mode };
+  if (interval > 0) body.interval_min = interval;
+  const btn = $('alertModeSave'); btn.disabled = true;
+  try {
+    await apiJson('/api/admin/settings', { method: 'POST', body: JSON.stringify(body) });
+    showWatchesMsg('Saved: alerts on “' + (MODE_LABEL[mode] || mode) + '” · every ' + interval + ' min.', true);
+    await loadWatches();
+  } catch (e) { showWatchesMsg(e.message, false); }
+  finally { btn.disabled = false; }
+}
+
+async function waLogout() {
+  if (!confirm('Log out the current WhatsApp sending account? You will need to scan a new QR to relink.')) return;
+  const btn = $('waLogoutBtn'); btn.disabled = true;
+  clearWatchesMsg();
+  try {
+    await apiJson('/api/admin/whatsapp/logout', { method: 'POST', body: '{}' });
+    showWatchesMsg('Logged out — a new QR will appear shortly.', true);
+    setTimeout(loadAdminWaStatus, 2500);
+  } catch (e) { showWatchesMsg(e.message, false); }
+  finally { btn.disabled = false; }
 }
 
 async function addWatch() {
@@ -2370,6 +2486,8 @@ async function addWatch() {
   };
   const notifyTo = $('watchNotifyTo').value.trim();
   if (notifyTo) payload.notify_to = notifyTo;
+  const threshold = ($('watchThreshold').value || '').replace(/[^\d.]/g, '').trim();
+  if (threshold) payload.price_threshold = threshold;
   if (!payload.products) { showWatchesMsg('Enter at least one product.', false); return; }
   if (!payload.pincodes && watchCities.size === 0) { showWatchesMsg('Enter a pincode or pick a city.', false); return; }
   const btn = $('watchAddBtn'); btn.disabled = true;
@@ -2377,7 +2495,7 @@ async function addWatch() {
     const data = await apiJson('/api/watches', { method: 'POST', body: JSON.stringify(payload) });
     const errs = (data.errors || []).length;
     showWatchesMsg(`Added ${data.created} watch${data.created === 1 ? '' : 'es'}.${errs ? ` ${errs} skipped.` : ''}`, true);
-    $('watchProducts').value = ''; $('watchPins').value = ''; $('watchNotifyTo').value = '';
+    $('watchProducts').value = ''; $('watchPins').value = ''; $('watchNotifyTo').value = ''; $('watchThreshold').value = '';
     watchCities.clear(); renderWatchCityCount();
     renderCityChecklist($('watchCityList'), watchCities, $('watchCitySearch').value);
     await loadWatches();
@@ -2419,6 +2537,9 @@ $('watchesModal').addEventListener('click', (e) => { if (e.target === $('watches
 $('watchAddBtn').addEventListener('click', addWatch);
 $('watchRefresh').addEventListener('click', loadWatches);
 $('waTestBtn').addEventListener('click', testWhatsapp);
+$('alertModeSave').addEventListener('click', saveAlertMode);
+$('waRefreshBtn').addEventListener('click', loadAdminWaStatus);
+$('waLogoutBtn').addEventListener('click', waLogout);
 $('watchCitySearch').addEventListener('input', (e) => renderCityChecklist($('watchCityList'), watchCities, e.target.value));
 $('watchCityClear').addEventListener('click', () => {
   watchCities.clear(); renderWatchCityCount();

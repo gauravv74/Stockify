@@ -11,7 +11,7 @@ import re
 import time
 from datetime import timedelta
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from curl_cffi import requests as cffi_requests
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -77,6 +77,38 @@ def parse_products(raw):
         if p:
             out.append(p)
     return out
+
+
+def parse_products_with_thresholds(raw):
+    """Parse product entries, each optionally suffixed with ``@<price>`` to set a
+    per-product target price (e.g. ``"oppo k14 6/128 @14300"``).
+
+    Returns a list of ``(product, threshold_or_None)`` tuples.
+    """
+    out = []
+    for p in parse_products(raw):
+        m = re.search(r"@\s*([0-9][0-9,]*\.?[0-9]*)\s*$", p)
+        if m:
+            name = p[:m.start()].strip()
+            try:
+                thr = float(m.group(1).replace(",", ""))
+            except ValueError:
+                thr = None
+            if name:
+                out.append((name, thr))
+                continue
+        out.append((p, None))
+    return out
+
+
+def _bridge_headers():
+    return {"X-Auth-Token": config.WA_BRIDGE_TOKEN} if config.WA_BRIDGE_TOKEN else {}
+
+
+def _bridge_url():
+    """Bridge base URL. A runtime setting overrides the env default so the web
+    container can reach the wa-bridge service by name without a recreate."""
+    return (watches.get_setting("wa_bridge_url") or config.WA_BRIDGE_URL).rstrip("/")
 
 
 def parse_raw_pincodes(raw):
@@ -758,11 +790,12 @@ def api_list_watches():
     uid = None if user.get("role") == "admin" else user["id"]
     return jsonify({
         "watches": watches.list_watches(user_id=uid),
-        "interval_min": config.WATCH_INTERVAL_MIN,
+        "interval_min": watches.get_interval_min(),
         "whatsapp": {
             "provider": config.WHATSAPP_PROVIDER,
             "configured": whatsapp.is_configured(),
-            "notify_on": config.WATCH_NOTIFY_ON,
+            "notify_on": watches.get_notify_mode(),
+            "modes": list(watches.NOTIFY_MODES),
         },
     })
 
@@ -790,22 +823,31 @@ def api_create_watches():
         payload["pincodes"] = []
 
     pincodes, _selected = resolve_pincodes(payload)
-    products = parse_products(payload.get("products", []))
+    product_specs = parse_products_with_thresholds(payload.get("products", []))
     platforms = resolve_platforms(payload.get("platform"), allowed)
     notify_to = (payload.get("notify_to") or "").strip() or None
+    # A single "target price" field applies to products that don't carry their
+    # own inline "@price"; inline thresholds always win.
+    try:
+        default_threshold = float(payload["price_threshold"]) if str(
+            payload.get("price_threshold", "")).strip() != "" else None
+    except (TypeError, ValueError):
+        default_threshold = None
 
     if not platforms:
         return jsonify({"error": "No platform access for the requested platform."}), 403
-    if not products:
+    if not product_specs:
         return jsonify({"error": "Enter at least one product."}), 400
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
 
     created, errors = [], []
     for pin in pincodes:
-        for q in products:
+        for q, thr in product_specs:
+            threshold = thr if thr is not None else default_threshold
             for plat in platforms:
-                w, err = watches.add_watch(user, plat, q, pin, notify_to=notify_to)
+                w, err = watches.add_watch(user, plat, q, pin, notify_to=notify_to,
+                                           price_threshold=threshold)
                 if w:
                     created.append(w)
                 elif err:
@@ -846,6 +888,85 @@ def api_test_whatsapp():
         "Stockly ✅ test alert — WhatsApp notifications are wired up.", to=to)
     return jsonify({"ok": ok, "detail": detail, "provider": config.WHATSAPP_PROVIDER}), (
         200 if ok else 502)
+
+
+# ---------------------------------------------------------------------------
+# Admin: global alert mode + WhatsApp Web (sending account) management.
+# ---------------------------------------------------------------------------
+@app.route("/api/admin/settings", methods=["GET"])
+@auth.admin_required
+def admin_get_settings():
+    return jsonify({
+        "notify_on": watches.get_notify_mode(),
+        "modes": list(watches.NOTIFY_MODES),
+        "interval_min": watches.get_interval_min(),
+    })
+
+
+@app.route("/api/admin/settings", methods=["POST"])
+@auth.admin_required
+def admin_set_settings():
+    payload = request.get_json(force=True, silent=True) or {}
+    mode = (payload.get("notify_on") or "").strip().lower()
+    if mode and mode not in watches.NOTIFY_MODES:
+        return jsonify({"error": f"Invalid mode. Use one of {list(watches.NOTIFY_MODES)}."}), 400
+    if mode:
+        watches.set_setting("notify_on", mode)
+    if str(payload.get("interval_min", "")).strip() != "":
+        try:
+            interval = max(1, int(payload["interval_min"]))
+        except (TypeError, ValueError):
+            return jsonify({"error": "interval_min must be a positive integer."}), 400
+        watches.set_setting("interval_min", interval)
+    return jsonify({"ok": True, "notify_on": watches.get_notify_mode(),
+                    "interval_min": watches.get_interval_min()})
+
+
+@app.route("/api/admin/whatsapp/status")
+@auth.admin_required
+def admin_whatsapp_status():
+    if config.WHATSAPP_PROVIDER != "webjs":
+        return jsonify({"ok": False, "provider": config.WHATSAPP_PROVIDER,
+                        "error": "WhatsApp Web bridge is only used when provider=webjs."}), 200
+    try:
+        r = cffi_requests.get(_bridge_url() + "/status",
+                              headers=_bridge_headers(), timeout=10)
+        data = r.json()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}",
+                        "bridge_url": config.WA_BRIDGE_URL}), 502
+    data["ok"] = True
+    data["provider"] = config.WHATSAPP_PROVIDER
+    return jsonify(data)
+
+
+@app.route("/api/admin/whatsapp/qr")
+@auth.admin_required
+def admin_whatsapp_qr():
+    try:
+        r = cffi_requests.get(_bridge_url() + "/qr",
+                              headers=_bridge_headers(), timeout=10)
+    except Exception as e:
+        return jsonify({"error": f"bridge unreachable: {e}"}), 502
+    if r.status_code == 204:
+        return ("", 204)
+    return Response(r.content, mimetype="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.route("/api/admin/whatsapp/logout", methods=["POST"])
+@auth.admin_required
+def admin_whatsapp_logout():
+    try:
+        r = cffi_requests.post(_bridge_url() + "/logout",
+                               headers=_bridge_headers(), timeout=20)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"ok": r.status_code == 200}
+        return jsonify(body), r.status_code
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 502
 
 
 if __name__ == "__main__":

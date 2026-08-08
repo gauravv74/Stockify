@@ -109,6 +109,8 @@ client.on('auth_failure', (msg) => {
 client.on('ready', () => {
   ready = true;
   lastState = 'ready';
+  // Linked now — drop the stale QR so /qr stops serving it.
+  try { require('fs').unlinkSync(QR_PNG); } catch (_) { /* ignore */ }
   console.log('✅  WhatsApp bridge ready — you can send messages now.');
 });
 
@@ -136,10 +138,43 @@ function authOk(req) {
   return req.get('X-Auth-Token') === TOKEN;
 }
 
-app.get('/health', (_req, res) => {
+function statusPayload() {
   let me = null;
   try { me = ready && client.info ? client.info.wid.user : null; } catch (_) { me = null; }
-  res.json({ ready, state: lastState, me });
+  const fs = require('fs');
+  let hasQr = false;
+  try { hasQr = !ready && lastState === 'qr' && fs.existsSync(QR_PNG); } catch (_) { hasQr = false; }
+  return { ready, state: lastState, me, has_qr: hasQr };
+}
+
+app.get('/health', (_req, res) => res.json(statusPayload()));
+
+// Same as /health; the admin UI polls this for link status.
+app.get('/status', (_req, res) => res.json(statusPayload()));
+
+// Current pairing QR as a PNG (only while unlinked). 204 when already linked.
+app.get('/qr', (_req, res) => {
+  const fs = require('fs');
+  if (ready || !fs.existsSync(QR_PNG)) return res.status(204).end();
+  res.type('png');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.sendFile(QR_PNG);
+});
+
+// Unlink the current WhatsApp account and re-initialise so a fresh QR appears.
+app.post('/logout', async (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    ready = false;
+    lastState = 'logging_out';
+    try { await client.logout(); } catch (_) { /* may already be unlinked */ }
+    try { require('fs').unlinkSync(QR_PNG); } catch (_) { /* ignore */ }
+    // Re-initialise to trigger a new 'qr' event.
+    client.initialize().catch((e) => console.error('re-init after logout failed:', e));
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: String((e && e.message) || e) });
+  }
 });
 
 app.post('/send', async (req, res) => {
