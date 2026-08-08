@@ -2550,10 +2550,19 @@ $('watchCityList').addEventListener('change', renderWatchCityCount);
 $('runBtn').addEventListener('click', run);
 $('stopBtn').addEventListener('click', async () => {
   if (!activeJobId) return;
-  setStatus('<span class="spin"></span><span>Stopping…</span>');
-  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: activeJobId }) }); }
+  const id = activeJobId;
+  // Detach the client immediately so Stop feels instant. Previously we only
+  // showed "Stopping…" and waited for the server to flip to 'canceled', but the
+  // poll loop overwrote that message on its next tick and kept ingesting rows,
+  // and a single in-flight check (e.g. Instamart's WAF priming) could block the
+  // server-side cancel for tens of seconds — so Stop looked like it did nothing.
+  // Now we finalize what we have and stop polling right away; the server-side
+  // job winds down on its own once it sees the cancel flag (checked between
+  // checks), and any rows it produces afterwards are simply never polled.
+  finalizeResultsOrder();
+  finishRun('canceled');   // clears job state, stops polling, re-enables Run
+  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: id }) }); }
   catch (_) {}
-  // The poll loop will notice the 'canceled' status and finalize the results.
 });
 $('csvBtn').addEventListener('click', exportCSV);
 setLocMode('cities');
