@@ -118,14 +118,47 @@ client.on('disconnected', (reason) => {
   ready = false;
   lastState = `disconnected:${reason}`;
   console.warn('⚠️   Disconnected:', reason, '— attempting to reconnect…');
-  // Re-initialise so a transient disconnect self-heals.
-  client.initialize().catch((e) => console.error('re-init failed:', e));
+  // Re-initialise so a transient disconnect self-heals (clears stale locks first).
+  safeInitialize('reconnect');
 });
 
-client.initialize().catch((e) => {
-  lastState = 'init_error';
-  console.error('initialize() failed:', e);
-});
+// whatsapp-web.js/Chromium leaves Singleton* lock files in the LocalAuth
+// profile if it doesn't exit cleanly (common on container restart/crash), and
+// those block the next launch with "profile appears to be in use" -> init_error.
+// Clear them before every (re)initialise so the bridge self-heals.
+function clearProfileLocks() {
+  const fs = require('fs');
+  const names = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+  const dirs = [AUTH_DIR];
+  try {
+    for (const d of fs.readdirSync(AUTH_DIR, { withFileTypes: true })) {
+      if (d.isDirectory()) dirs.push(path.join(AUTH_DIR, d.name));
+    }
+  } catch (_) { /* dir may not exist yet */ }
+  for (const dir of dirs) {
+    for (const n of names) {
+      try {
+        fs.unlinkSync(path.join(dir, n));
+        console.log('cleared stale Chromium lock:', path.join(dir, n));
+      } catch (_) { /* absent — fine */ }
+    }
+  }
+}
+
+function safeInitialize(label) {
+  clearProfileLocks();
+  client.initialize().catch((e) => {
+    lastState = 'init_error';
+    console.error(`${label || 'initialize'}() failed:`, e && e.message);
+    // A stale lock from a crashed Chromium is the usual cause; retry once more.
+    setTimeout(() => {
+      clearProfileLocks();
+      client.initialize().catch((e2) => console.error('retry init failed:', e2 && e2.message));
+    }, 4000);
+  });
+}
+
+safeInitialize('startup');
 
 // ---------------------------------------------------------------------------
 // HTTP API (bound to localhost by default; use a token if you expose it).
@@ -169,8 +202,8 @@ app.post('/logout', async (req, res) => {
     lastState = 'logging_out';
     try { await client.logout(); } catch (_) { /* may already be unlinked */ }
     try { require('fs').unlinkSync(QR_PNG); } catch (_) { /* ignore */ }
-    // Re-initialise to trigger a new 'qr' event.
-    client.initialize().catch((e) => console.error('re-init after logout failed:', e));
+    // Re-initialise to trigger a new 'qr' event (clears stale locks first).
+    safeInitialize('post-logout');
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: String((e && e.message) || e) });
