@@ -22,6 +22,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import random
 import re
 import signal
 import time
@@ -59,6 +60,44 @@ def _handle_stop(signum, _frame):
     global _STOP
     log.info("signal %s received -> shutting down after current cycle", signum)
     _STOP = True
+
+
+# Monotonic timestamp of the last check per platform, used by _throttle() to
+# space out calls to rate-limited APIs (see config.PLATFORM_MIN_INTERVAL_SEC).
+_last_check_ts: dict[str, float] = {}
+
+
+def _interruptible_sleep(seconds):
+    """Sleep up to ``seconds`` but wake early on shutdown (2s slices)."""
+    end = time.monotonic() + seconds
+    while not _STOP:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(2.0, remaining))
+
+
+def _throttle(platform):
+    """Enforce a minimum, jittered gap between consecutive checks of a
+    rate-limited platform.
+
+    Swiggy Instamart's search endpoint is behind a CloudFront JA4 rate-limiter
+    that 403s bursts from one IP/TLS-fingerprint; spacing the calls out (with a
+    little randomness so the cadence isn't clockwork) keeps us under it. No-op
+    for platforms absent from ``config.PLATFORM_MIN_INTERVAL_SEC``.
+    """
+    min_gap = config.PLATFORM_MIN_INTERVAL_SEC.get(platform, 0.0)
+    if min_gap <= 0:
+        return
+    jitter = config.PLATFORM_JITTER_SEC.get(platform, 0.0)
+    target = min_gap + (random.uniform(0, jitter) if jitter > 0 else 0.0)
+    last = _last_check_ts.get(platform)
+    if last is not None:
+        wait = target - (time.monotonic() - last)
+        if wait > 0:
+            log.debug("throttle %s: sleeping %.1fs before next check", platform, wait)
+            _interruptible_sleep(wait)
+    _last_check_ts[platform] = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +278,8 @@ def _process_watch(watch, session, cache):
         watches.record_result(wid, "geocode_failed", False, None, False, False)
         return
 
-    # 2) check the platform
+    # 2) check the platform (throttled for rate-limited APIs like Instamart)
+    _throttle(platform)
     try:
         row = _check_platform(platform, session, q, lat, lon, pin)
     except Exception as e:
@@ -292,7 +332,11 @@ def run_cycle(session, cache):
         if _STOP:
             break
         _process_watch(w, session, cache)
-        time.sleep(config.WATCH_PAUSE_SEC)
+        # Base polite pause + a little jitter so the stream isn't perfectly
+        # periodic (harder for cadence-based rate limiters to key on).
+        jitter = random.uniform(0, config.WATCH_PAUSE_JITTER_SEC) \
+            if config.WATCH_PAUSE_JITTER_SEC > 0 else 0.0
+        _interruptible_sleep(config.WATCH_PAUSE_SEC + jitter)
     return len(due)
 
 

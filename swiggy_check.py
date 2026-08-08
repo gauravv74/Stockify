@@ -17,6 +17,7 @@ Matching reuses blinkit_check.best_match (accessory-aware).
 import asyncio
 import threading
 
+from curl_cffi import requests as cffi_requests
 from playwright.async_api import async_playwright
 
 import blinkit_check as bk
@@ -24,6 +25,12 @@ import config
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+
+# curl_cffi TLS/HTTP fingerprint to impersonate for the search request. Swiggy's
+# CloudFront guards /search/v2 with a "JA4-ratelimit-instamart" limiter that 403s
+# the headless browser's distinctive fingerprint; issuing the call via curl_cffi
+# with a mainstream Chrome JA3/JA4 (matching our UA's Chrome 142) sidesteps it.
+IMPERSONATE = "chrome142"
 
 STORE_JS = r"""
 async ([lat, lng]) => {
@@ -84,6 +91,70 @@ async ([storeId, q]) => {
   return {status: 200, items: out};
 }
 """
+
+# Endpoint + request body for the search POST, shared by the curl_cffi path.
+SEARCH_URL = ("https://www.swiggy.com/api/instamart/search/v2"
+              "?offset=0&ageConsent=false&voiceSearchTrackingId="
+              "&storeId={store}&primaryStoreId={store}&secondaryStoreId=")
+
+
+def _search_body(query):
+    return {
+        "facets": [], "sortAttribute": "", "query": query,
+        "search_results_offset": "0",
+        "page_type": "INSTAMART_AUTO_SUGGEST_PAGE", "is_pre_search_tag": False,
+    }
+
+
+def _num(v):
+    """Coerce a price 'units' value (str/int) to int, or None."""
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_items(j):
+    """Walk Swiggy's search JSON into flat product rows.
+
+    Mirrors SEARCH_JS's walk exactly so the curl_cffi path yields identical rows
+    to the in-page fetch: one entry per (displayName, first-variation) with the
+    same name/brand/inStock/variant/mrp/price/eta fields, de-duplicated on
+    name|variant.
+    """
+    items, seen = [], set()
+
+    def walk(o):
+        if isinstance(o, dict):
+            variations = o.get("variations")
+            if o.get("displayName") and isinstance(variations, list) and variations \
+                    and isinstance(variations[0], dict):
+                v = variations[0]
+                p = v.get("price") or {}
+                mrp = _num((p.get("mrp") or {}).get("units"))
+                offer = _num((p.get("offerPrice") or {}).get("units"))
+                sla = v.get("sla") or {}
+                row = {
+                    "name": o.get("displayName"),
+                    "brand": o.get("brand") or "",
+                    "inStock": bool(o.get("inStock")),
+                    "variant": v.get("quantityDescription") or "",
+                    "mrp": mrp,
+                    "price": offer if offer is not None else mrp,
+                    "eta": sla.get("deliveryTime") or sla.get("slaString") or "",
+                }
+                key = f"{row['name']}|{row['variant']}"
+                if key not in seen:
+                    seen.add(key)
+                    items.append(row)
+            for val in o.values():
+                walk(val)
+        elif isinstance(o, list):
+            for val in o:
+                walk(val)
+
+    walk(j)
+    return items
 
 
 class SwiggyInstamart:
@@ -206,6 +277,52 @@ class SwiggyInstamart:
         return (res.get("status") != 200 or res.get("empty")
                 or items is None or len(items) == 0)
 
+    async def _search_cffi(self, store, query):
+        """Run the search POST via curl_cffi impersonating Chrome.
+
+        Swiggy 403s the headless browser's TLS/HTTP fingerprint on /search/v2
+        (CloudFront "JA4-ratelimit-instamart"). We reuse the cookies the primed
+        browser already holds (WAF token + instamart session), exit through the
+        same residential proxy, and present a mainstream Chrome JA3/JA4 so the
+        request looks like an ordinary consumer's. Returns the same shape as the
+        in-page SEARCH_JS ({status, items, [empty]}).
+        """
+        # Cookies the browser earned during priming (aws-waf-token, sid, tid,
+        # deviceId, ...). Scope to Swiggy so we don't leak unrelated cookies.
+        ck_list = await self._ctx.cookies()
+        cookies = {c["name"]: c["value"] for c in ck_list
+                   if "swiggy" in (c.get("domain") or "")}
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "origin": "https://www.swiggy.com",
+            "referer": "https://www.swiggy.com/instamart/search?custom_back=true",
+            "user-agent": UA,
+        }
+        url = SEARCH_URL.format(store=store)
+        body = _search_body(query)
+        proxies = config.curl_proxies()
+
+        def _do():
+            try:
+                r = cffi_requests.post(
+                    url, json=body, headers=headers, cookies=cookies,
+                    impersonate=IMPERSONATE, proxies=proxies, timeout=30,
+                )
+            except Exception as e:  # network/proxy error -> transient, retryable
+                return {"status": 0, "items": None, "empty": True, "err": str(e)}
+            if r.status_code != 200:
+                return {"status": r.status_code, "items": None}
+            try:
+                j = r.json()
+            except Exception:
+                return {"status": 200, "items": None, "empty": True}
+            return {"status": 200, "items": extract_items(j)}
+
+        # curl_cffi is synchronous; run it off the event loop so we don't block
+        # the client's single loop thread.
+        return await asyncio.get_event_loop().run_in_executor(None, _do)
+
     async def _query(self, lat, lon, query):
         await self._ensure()
         store, definitive = await self._store_lookup(lat, lon)
@@ -216,14 +333,15 @@ class SwiggyInstamart:
             # the UI shows a transient failure rather than a false "Unserviceable".
             return {"serviceable": None, "store": None, "items": [],
                     "error": "swiggy session/WAF challenge not solved"}
-        res = await self._page.evaluate(SEARCH_JS, [store, query])
+        res = await self._search_cffi(store, query)
         if self._search_bad(res):
-            # Likely a stale session -> re-prime, re-resolve the store (it can
-            # change after a fresh session) and retry once before trusting it.
+            # Likely a stale session (WAF cookies expired) -> re-prime to refresh
+            # them, re-resolve the store (it can change after a fresh session),
+            # and retry once via curl_cffi before trusting the empty result.
             await self._prime()
             store2, _ = await self._store_lookup(lat, lon)
             store = store2 or store
-            res = await self._page.evaluate(SEARCH_JS, [store, query])
+            res = await self._search_cffi(store, query)
         return {"serviceable": True, "store": store, "items": res.get("items") or []}
 
     def check(self, lat, lon, query):

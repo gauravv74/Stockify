@@ -237,7 +237,13 @@ def parse_products(snippets):
 
 
 def _norm(s):
-    return re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
+    s = re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
+    # Split glued number+unit so a query like "500g" matches a catalogue
+    # variant rendered as "500 g" (and "1ltr" == "1 ltr", "128gb" == "128 gb").
+    # Without this, best_match's "every query token must appear" rule drops the
+    # right product because "500g" != the separate tokens "500" and "g".
+    s = re.sub(r"(\d)\s*([a-z])", r"\1 \2", s)
+    return s
 
 
 def _capacity_gb(product):

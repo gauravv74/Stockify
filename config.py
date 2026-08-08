@@ -134,6 +134,23 @@ WATCH_TICK_SEC = int(os.environ.get("STOCKLY_WATCH_TICK_SEC", "60"))
 WATCH_BATCH = int(os.environ.get("STOCKLY_WATCH_BATCH", "40"))
 # Polite pause (seconds) between individual checks inside one cycle.
 WATCH_PAUSE_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_SEC", "1.5"))
+# Random extra jitter (0..N seconds) added on top of WATCH_PAUSE_SEC between
+# checks, so the request stream isn't perfectly periodic. Cadence-based rate
+# limiters (e.g. Swiggy Instamart's CloudFront JA4 limiter) are easier to trip
+# with clockwork-regular traffic, so a little randomness helps.
+WATCH_PAUSE_JITTER_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_JITTER_SEC", "1.5"))
+
+# Per-platform minimum spacing (seconds) between two *consecutive* checks of
+# that platform, to dodge fingerprint/cadence rate limits. Swiggy Instamart's
+# search endpoint sits behind a CloudFront "JA4-ratelimit-instamart" limiter
+# that 403s bursts from a single IP/TLS-fingerprint, so we space those out far
+# more than the cheaper platforms. A random 0..jitter is added on top. Any
+# platform not listed here is not throttled (min spacing 0).
+INSTAMART_MIN_INTERVAL_SEC = float(
+    os.environ.get("STOCKLY_INSTAMART_MIN_INTERVAL_SEC", "12"))
+INSTAMART_JITTER_SEC = float(os.environ.get("STOCKLY_INSTAMART_JITTER_SEC", "6"))
+PLATFORM_MIN_INTERVAL_SEC = {"instamart": INSTAMART_MIN_INTERVAL_SEC}
+PLATFORM_JITTER_SEC = {"instamart": INSTAMART_JITTER_SEC}
 # When to alert:
 #   "change"       -> any meaningful status change (in stock <-> out of stock ...)
 #   "availability" -> only when it (re)enters stock
