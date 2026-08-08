@@ -118,6 +118,16 @@ class SwiggyInstamart:
         if proxy:
             ctx_kwargs["proxy"] = proxy
         self._ctx = await self._browser.new_context(**ctx_kwargs)
+        # Bandwidth saver: drop heavy assets we never read (images/media/fonts).
+        # Keeps scripts/xhr/documents so the WAF challenge + API calls still work.
+        # Slashes data usage ~5-10x — important when egress is a metered
+        # residential/mobile proxy (e.g. a phone hotspot / JioFi).
+        await self._ctx.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in ("image", "media", "font")
+            else route.continue_(),
+        )
         self._page = await self._ctx.new_page()
         await self._prime()
 

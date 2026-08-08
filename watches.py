@@ -205,8 +205,9 @@ def due_watches(interval_min, limit):
             f"""
             SELECT * FROM watches
             WHERE active = 1
-              AND (last_checked_at IS NULL OR last_checked_at <= {cutoff_expr})
-            ORDER BY (last_checked_at IS NOT NULL), last_checked_at ASC
+              AND (last_checked_at IS NULL
+                   OR datetime(last_checked_at) <= {cutoff_expr})
+            ORDER BY (last_checked_at IS NOT NULL), datetime(last_checked_at) ASC
             LIMIT ?
             """,
             (int(limit),),
