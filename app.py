@@ -286,6 +286,33 @@ def admin_delete_user(user_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/admin/users/<user_id>/tokens", methods=["POST"])
+@auth.admin_required
+def admin_grant_tokens(user_id):
+    """Add (or, with a negative amount, deduct) tokens for a user."""
+    payload = request.get_json(force=True, silent=True) or {}
+    me = auth.current_user()
+    new_balance, err = auth.grant_tokens(
+        user_id, payload.get("amount"),
+        actor=(me or {}).get("username"), note=payload.get("note"))
+    if err:
+        code = 404 if err == "User not found." else 400
+        return jsonify({"error": err}), code
+    return jsonify({"ok": True, "balance": new_balance})
+
+
+@app.route("/api/admin/tokens/ledger")
+@auth.admin_required
+def admin_token_ledger():
+    """Recent token movements (grants + spends), optionally for one user."""
+    try:
+        limit = int(request.args.get("limit", 200))
+    except (TypeError, ValueError):
+        limit = 200
+    user_id = (request.args.get("user_id") or "").strip() or None
+    return jsonify({"ledger": auth.list_ledger(user_id, limit)})
+
+
 @app.route("/api/admin/searches")
 @auth.admin_required
 def admin_list_searches():
@@ -529,13 +556,18 @@ def _order_pincodes_by_distance(pincodes, cache, ref_lat, ref_lon):
 
 
 def _run_check_job(job_id, pincodes, products, platforms,
-                   ref_lat=None, ref_lon=None, order_by=None):
+                   ref_lat=None, ref_lon=None, order_by=None,
+                   user_id=None, is_admin=False):
     """Execute a search run in the background, persisting each result row.
 
     Runs in a daemon thread decoupled from any HTTP request, so the run keeps
     going even if the user backgrounds the tab, locks the phone, or reloads —
     the browser just re-polls ``/api/check/poll`` from its cursor. Cancellation
     is cooperative: we check the job's cancel flag between checks.
+
+    Non-admin users are charged tokens per *billable* result (in-stock /
+    out-of-stock) as each row resolves. When the wallet runs dry the run stops
+    and a ``tokens_exhausted`` notice is emitted so the UI can prompt a top-up.
 
     When ``order_by == 'distance'`` and a reference point is given, pincodes are
     processed nearest-first so the most relevant results stream in first.
@@ -547,6 +579,8 @@ def _run_check_job(job_id, pincodes, products, platforms,
             pincodes = _order_pincodes_by_distance(pincodes, cache, ref_lat, ref_lon)
         idx = 0
         canceled = False
+        exhausted = False
+        charge = bool(user_id) and not is_admin
         for pin in pincodes:
             if jobs.is_canceled(job_id):
                 canceled = True
@@ -582,11 +616,35 @@ def _run_check_job(job_id, pincodes, products, platforms,
                         log.exception("check failed pin=%s plat=%s q=%s", pin, plat, q)
                         row["status"] = "error"
                         row["detail"] = str(e)[:200]
+
+                    # Charge for a real availability answer (in-stock/out-of-stock).
+                    # Do it before emitting so the row can carry the fresh balance.
+                    if charge:
+                        cost = config.TOKEN_COST.get(row.get("status"), 0)
+                        if cost:
+                            consumed, balance = auth.consume_tokens(
+                                user_id, cost, reason="search",
+                                meta=f"{plat}:{pin}:{q}:{row.get('status')}")
+                            row["token_cost"] = consumed
+                            row["balance"] = balance
+                            if consumed < cost or balance <= 0:
+                                exhausted = True
                     jobs.add_event(job_id, row)
-            if canceled:
+                    if exhausted:
+                        jobs.add_event(job_id, {
+                            "type": "notice", "kind": "tokens_exhausted",
+                            "balance": row.get("balance", 0),
+                        })
+                        break
+                if canceled or exhausted:
+                    break
+            if canceled or exhausted:
                 break
 
-        jobs.set_status(job_id, "canceled" if (canceled or jobs.is_canceled(job_id)) else "done")
+        if exhausted and not canceled:
+            jobs.set_status(job_id, "exhausted")
+        else:
+            jobs.set_status(job_id, "canceled" if (canceled or jobs.is_canceled(job_id)) else "done")
     except Exception as e:
         log.exception("search job %s crashed", job_id)
         jobs.set_status(job_id, "error", detail=str(e)[:200])
@@ -637,6 +695,17 @@ def check_start():
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
 
+    # Token gate: a non-admin with an empty wallet can't start a run.
+    is_admin = user.get("role") == "admin"
+    if not is_admin:
+        balance = auth.get_balance(user.get("id"))
+        if balance <= 0:
+            return jsonify({
+                "error": "Your tokens are used up. Please contact the admin for a recharge.",
+                "code": "tokens_exhausted",
+                "balance": 0,
+            }), 402
+
     total = len(pincodes) * len(products) * len(platforms)
 
     # Audit the request so admins can see what users searched.
@@ -661,11 +730,12 @@ def check_start():
     t = threading.Thread(
         target=_run_check_job,
         args=(job_id, pincodes, products, platforms),
-        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by},
+        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by,
+                "user_id": user.get("id"), "is_admin": is_admin},
         daemon=True)
     t.start()
 
-    return jsonify({"job_id": job_id, "meta": meta})
+    return jsonify({"job_id": job_id, "meta": meta, "balance": None if is_admin else auth.get_balance(user.get("id"))})
 
 
 @app.route("/api/check/poll")
@@ -693,6 +763,8 @@ def check_poll():
         "detail": job.get("detail"),
         "events": events,
         "cursor": next_cursor,
+        # Live wallet balance so the header updates as tokens are spent (null = admin/unlimited).
+        "balance": None if user.get("role") == "admin" else auth.get_balance(user.get("id")),
     })
 
 

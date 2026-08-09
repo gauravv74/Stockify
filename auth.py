@@ -99,6 +99,7 @@ def _row_to_user(row):
         "platforms": _platforms_from_json(row["platforms_json"]),
         "cities": _cities_from_json(row["cities_json"]) if "cities_json" in keys else [],
         "allow_pincodes": bool(row["allow_pincodes"]) if "allow_pincodes" in keys else True,
+        "token_balance": int(row["token_balance"]) if "token_balance" in keys and row["token_balance"] is not None else 0,
         "active": bool(row["active"]),
         "must_change_password": bool(row["must_change_password"]),
         "created_at": row["created_at"],
@@ -114,6 +115,8 @@ def _public_user(u):
         # Empty list == unrestricted (all cities). Admins are always unrestricted.
         "cities": [] if u.get("role") == "admin" else list(u.get("cities", []) or []),
         "allow_pincodes": True if u.get("role") == "admin" else bool(u.get("allow_pincodes", True)),
+        # Admins are unlimited; expose null so the UI can show "∞" for them.
+        "token_balance": None if u.get("role") == "admin" else int(u.get("token_balance", 0) or 0),
         "active": bool(u.get("active", True)),
         "must_change_password": bool(u.get("must_change_password", False)),
         "created_at": u.get("created_at"),
@@ -206,6 +209,10 @@ def init_db():
                 conn.execute("ALTER TABLE users ADD COLUMN cities_json TEXT NOT NULL DEFAULT '[]'")
             if "allow_pincodes" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN allow_pincodes INTEGER NOT NULL DEFAULT 1")
+            # Token/credit wallet (monetisation). New users start at 0; an admin
+            # tops them up. Admins are never charged regardless of this value.
+            if "token_balance" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0")
             # Audit log of what each user searched (admins can review it).
             conn.execute(
                 """
@@ -223,6 +230,24 @@ def init_db():
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_searches_created ON searches(created_at DESC)")
+            # Token ledger: an audit trail of every grant (+) and spend (-) so
+            # admins can reconcile balances and see usage. balance_after is the
+            # wallet total right after the entry was applied.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS token_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    delta INTEGER NOT NULL,
+                    reason TEXT,
+                    balance_after INTEGER,
+                    actor TEXT,
+                    meta TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_user ON token_ledger(user_id, id DESC)")
             n = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
             created_default = False
             if n == 0:
@@ -492,6 +517,107 @@ def list_searches(limit=200):
         }
         for r in rows
     ]
+
+
+# ── Token wallet ────────────────────────────────────────────────────────────
+def get_balance(user_id):
+    """Current token balance for a user (0 if unknown). Admins are unlimited but
+    this returns their stored integer; callers gate on role for 'unlimited'."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT token_balance FROM users WHERE id = ?", (user_id,)).fetchone()
+    return int(row["token_balance"]) if row and row["token_balance"] is not None else 0
+
+
+def grant_tokens(user_id, amount, actor=None, note=None):
+    """Admin action: add (or, with a negative amount, deduct) tokens. Balance is
+    clamped at 0. Returns (new_balance, error)."""
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return None, "Amount must be a whole number."
+    if amount == 0:
+        return None, "Amount must be non-zero."
+    user = find_user_by_id(user_id)
+    if not user:
+        return None, "User not found."
+    if user["role"] == "admin":
+        return None, "Admins have unlimited tokens — no need to top up."
+    with _conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT token_balance FROM users WHERE id = ?", (user_id,)).fetchone()
+        cur = int(row["token_balance"] or 0)
+        new = max(0, cur + amount)
+        applied = new - cur
+        conn.execute(
+            "UPDATE users SET token_balance = ? WHERE id = ?", (new, user_id))
+        conn.execute(
+            """INSERT INTO token_ledger
+               (user_id, delta, reason, balance_after, actor, meta, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, applied, "grant" if amount > 0 else "adjust", new,
+             actor, note, _now()),
+        )
+    return new, None
+
+
+def consume_tokens(user_id, amount, reason="search", meta=None):
+    """Atomically spend up to ``amount`` tokens. Never goes negative and never
+    charges admins. Returns ``(consumed, balance_after)``.
+
+    Uses BEGIN IMMEDIATE so concurrent web workers can't lose an update by
+    reading the same balance before either writes.
+    """
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return 0, 0
+    if amount <= 0:
+        return 0, get_balance(user_id)
+    with _conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT token_balance, role FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            return 0, 0
+        if row["role"] == "admin":
+            return 0, int(row["token_balance"] or 0)  # unlimited — never charged
+        cur = int(row["token_balance"] or 0)
+        consumed = min(amount, cur)
+        if consumed <= 0:
+            return 0, cur
+        new = cur - consumed
+        conn.execute(
+            "UPDATE users SET token_balance = ? WHERE id = ?", (new, user_id))
+        conn.execute(
+            """INSERT INTO token_ledger
+               (user_id, delta, reason, balance_after, actor, meta, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, -consumed, reason, new, None, meta, _now()),
+        )
+    return consumed, new
+
+
+def list_ledger(user_id=None, limit=200):
+    """Recent token movements, optionally filtered to one user (newest first)."""
+    limit = max(1, min(int(limit or 200), 1000))
+    with _conn() as conn:
+        if user_id:
+            rows = conn.execute(
+                "SELECT * FROM token_ledger WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                (user_id, limit)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM token_ledger ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["id"], "user_id": r["user_id"], "delta": r["delta"],
+            "reason": r["reason"], "balance_after": r["balance_after"],
+            "actor": r["actor"], "meta": r["meta"], "created_at": r["created_at"],
+        })
+    return out
 
 
 def current_user():

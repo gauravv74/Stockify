@@ -146,6 +146,20 @@ WATCH_PAUSE_JITTER_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_JITTER_SEC", 
 # starts clean. Generous enough to cover a worst-case WAF re-prime.
 SCRAPER_CHECK_TIMEOUT_SEC = float(os.environ.get("STOCKLY_SCRAPER_CHECK_TIMEOUT_SEC", "120"))
 
+# ── Token / credit system (monetisation) ────────────────────────────────────
+# A non-admin user spends tokens per *billable* availability result (one per
+# pincode × platform × product that returns a real in-stock / out-of-stock
+# answer). Not-listed / unserviceable / error / geocode-failed are free, so a
+# user is never charged for a check that didn't actually resolve stock. Admins
+# are never charged. Costs are configurable via env for easy repricing.
+TOKEN_COST_IN_STOCK = int(os.environ.get("STOCKLY_TOKEN_COST_IN_STOCK", "2"))
+TOKEN_COST_OUT_OF_STOCK = int(os.environ.get("STOCKLY_TOKEN_COST_OUT_OF_STOCK", "1"))
+# Map result status -> token cost. Only these statuses are billable.
+TOKEN_COST = {
+    "available": TOKEN_COST_IN_STOCK,
+    "out_of_stock": TOKEN_COST_OUT_OF_STOCK,
+}
+
 # Per-platform minimum spacing (seconds) between two *consecutive* checks of
 # that platform, to dodge fingerprint/cadence rate limits. Swiggy Instamart's
 # search endpoint sits behind a CloudFront "JA4-ratelimit-instamart" limiter

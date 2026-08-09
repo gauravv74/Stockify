@@ -485,6 +485,19 @@
   }
   .user-chip .role.user { background: #64748b; }
 
+  .token-chip {
+    height: 36px; padding: 0 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface-2);
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 800; color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .token-chip svg { color: var(--accent, #0f766e); flex: none; }
+  .token-chip.low { border-color: #fde68a; background: var(--orange-bg); color: var(--orange); }
+  .token-chip.zero { border-color: #fecaca; background: var(--red-bg); color: var(--red); }
+  .token-bal.zero { color: var(--red); font-weight: 800; }
+  @media (max-width: 520px) { .token-chip .btn-label { display: none; } }
+
   .modal-backdrop {
     display: none; position: fixed; inset: 0; z-index: 80;
     background: rgba(15, 23, 42, .45); align-items: flex-start; justify-content: center;
@@ -701,6 +714,10 @@
       <span id="userChipName">—</span>
       <span class="role" id="userChipRole">user</span>
     </div>
+    <div class="token-chip authed-only" id="tokenChip" style="display:none;" title="Search tokens remaining (in-stock costs 2, out-of-stock costs 1)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5a2.5 2.5 0 0 1 5 0c0 1.4-1 2-2.5 2.5S9 14.6 9 16"/></svg>
+      <span id="tokenChipVal">—</span>
+    </div>
     <button class="icon-btn authed-only" id="usersBtn" style="display:none;" title="Manage users" aria-label="Manage users">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       <span class="btn-label">Users</span>
@@ -805,12 +822,13 @@
               <th>User</th>
               <th>Platforms</th>
               <th>Location access</th>
+              <th>Tokens</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="usersTbody">
-            <tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>
+            <tr><td colspan="6" class="empty" style="padding:24px;">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1207,6 +1225,7 @@ function applyAuthUI() {
     const roleEl = $('userChipRole');
     roleEl.textContent = currentUser.role;
     roleEl.classList.toggle('user', currentUser.role !== 'admin');
+    updateBalance(currentUser.token_balance);
     // Hide main app until password is changed
     $('appShell').style.display = currentUser.must_change_password ? 'none' : '';
   } else {
@@ -1214,6 +1233,23 @@ function applyAuthUI() {
   }
   applyPlatformAccess();
   applyLocationAccess();
+}
+
+// Reflect the wallet balance in the header chip. `balance === null` means the
+// account is unlimited (admin). Keeps currentUser.token_balance in sync so the
+// value survives re-renders.
+function updateBalance(balance) {
+  const chip = $('tokenChip'), val = $('tokenChipVal');
+  if (!chip || !val || !currentUser) return;
+  if (currentUser.role === 'admin' || balance === null || balance === undefined) {
+    if (currentUser.role === 'admin') { val.textContent = '∞'; chip.classList.remove('low', 'zero'); }
+    return;
+  }
+  const n = Math.max(0, Number(balance) || 0);
+  currentUser.token_balance = n;
+  val.textContent = n.toLocaleString('en-IN');
+  chip.classList.toggle('zero', n <= 0);
+  chip.classList.toggle('low', n > 0 && n <= 10);
 }
 
 function applyLocationAccess() {
@@ -1577,12 +1613,12 @@ $('accessSave').addEventListener('click', async () => {
 
 async function loadAdminUsers() {
   const tb = $('usersTbody');
-  tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>`;
+  tb.innerHTML = `<tr><td colspan="6" class="empty" style="padding:24px;">Loading…</td></tr>`;
   try {
     const data = await apiJson('/api/admin/users');
     const users = data.users || [];
     if (!users.length) {
-      tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">No users yet.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="empty" style="padding:24px;">No users yet.</td></tr>`;
       return;
     }
     tb.innerHTML = users.map(u => {
@@ -1597,10 +1633,15 @@ async function loadAdminUsers() {
         ? `<div class="sub">All cities · Pincodes on</div>`
         : `<div class="uname" style="font-weight:600;">${escHtml(citySummaryText(u))}</div>
            <div class="sub">Pincodes ${pinsOn ? 'on' : 'off'} · <button type="button" class="link-btn" data-act="access" data-uid="${escHtml(u.id)}">Edit</button></div>`;
+      const tokenCell = u.role === 'admin'
+        ? `<span class="sub" title="Admins are never charged">∞</span>`
+        : `<span class="token-bal ${(u.token_balance || 0) <= 0 ? 'zero' : ''}">${(u.token_balance || 0).toLocaleString('en-IN')}</span>
+           <button type="button" class="link-btn" data-act="tokens" data-uid="${escHtml(u.id)}" style="margin-left:8px;">Add</button>`;
       return `<tr>
         <td><div class="uname">${escHtml(u.username)}</div><div class="sub">${escHtml(u.role)}</div></td>
         <td><div class="mini-toggles">${toggles}</div></td>
         <td>${locCell}</td>
+        <td style="white-space:nowrap;">${tokenCell}</td>
         <td>${active ? '<span class="badge b-available">Active</span>' : '<span class="badge b-error">Disabled</span>'}</td>
         <td style="white-space:nowrap;">
           ${u.role === 'admin' ? '' : `<button type="button" class="link-btn" data-act="toggle" data-uid="${escHtml(u.id)}" data-active="${active ? '0' : '1'}">${active ? 'Disable' : 'Enable'}</button>
@@ -1636,6 +1677,22 @@ async function loadAdminUsers() {
           if (user) openEditAccess(user);
           return;
         }
+        if (btn.dataset.act === 'tokens') {
+          const user = users.find(x => x.id === uid);
+          const cur = user ? (user.token_balance || 0) : 0;
+          const raw = prompt(`Add tokens for "${user ? user.username : ''}" (current: ${cur}).\nEnter a number (use a negative value to deduct):`, '100');
+          if (raw === null) return;
+          const amount = parseInt(raw, 10);
+          if (!Number.isFinite(amount) || amount === 0) { showAdminMsg('Enter a non-zero whole number.', false); return; }
+          try {
+            const res = await apiJson('/api/admin/users/' + uid + '/tokens', {
+              method: 'POST', body: JSON.stringify({ amount }),
+            });
+            showAdminMsg(`Updated — new balance: ${res.balance}.`, true);
+            await loadAdminUsers();
+          } catch (err) { showAdminMsg(err.message, false); }
+          return;
+        }
         try {
           if (btn.dataset.act === 'delete') {
             if (!confirm('Delete this account?')) return;
@@ -1653,7 +1710,7 @@ async function loadAdminUsers() {
       });
     });
   } catch (err) {
-    tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -1954,6 +2011,13 @@ function finalizeResultsOrder() {
   if (cards) cards.scrollTop = 0;
 }
 
+function handleNotice(n) {
+  // Server-emitted, non-result events (currently only the wallet-empty signal).
+  if (n && n.kind === 'tokens_exhausted') {
+    updateBalance(n.balance != null ? n.balance : 0);
+  }
+}
+
 function addRow(r) {
   // Idempotent: each server row carries a unique `seq`. If we've already shown
   // it (e.g. two overlapping polls returned the same batch), skip it so the
@@ -1962,6 +2026,8 @@ function addRow(r) {
     if (seenSeqs.has(r.seq)) return;
     seenSeqs.add(r.seq);
   }
+  // Notices (e.g. tokens exhausted) aren't result rows — handle and skip.
+  if (r && r.type === 'notice') { handleNotice(r); return; }
   if (rows.length === 0) { $('tbody').innerHTML = ''; $('cards').innerHTML = ''; }
   rows.push(r);
   appendRowDom(r);
@@ -2132,7 +2198,9 @@ function finishRun(status, detail) {
   }
   const inStock = counts.available;
   const inStockPins = new Set(rows.filter(r => r.status === 'available').map(r => r.pincode)).size;
-  if (status === 'canceled') {
+  if (status === 'exhausted') {
+    setStatus(`<span style="color:var(--red)">⚠ Your tokens are used up — showing ${done} result${done === 1 ? '' : 's'}. <strong>Contact the admin for a recharge.</strong></span>`);
+  } else if (status === 'canceled') {
     setStatus(`<span>Stopped at ${done} / ${total || done}. <strong style="color:var(--green)">${inStock} in stock</strong> (shown first).</span>`);
   } else if (status === 'error') {
     setStatus(`<span>Stopped on error: ${escHtml(detail || 'unknown')} — showing ${done} result${done === 1 ? '' : 's'}.</span>`);
@@ -2168,6 +2236,7 @@ async function pollJob() {
     if (data.meta) renderMeta(data.meta);
     for (const ev of (data.events || [])) addRow(ev);
     if ((data.events || []).length) jobCursor = data.cursor;
+    if (data.balance !== undefined) updateBalance(data.balance);
     const done = rows.length;
     $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
     if (data.status === 'running') {
@@ -2203,12 +2272,21 @@ async function run() {
     activeJobId = data.job_id;
     jobCursor = 0;
     saveActiveJob(activeJobId);
+    if (data.balance !== undefined) updateBalance(data.balance);
     renderMeta(data.meta);
     pollJob();
   } catch (e) {
     if (e.status === 401) { currentUser = null; applyAuthUI(); }
     clearJobState();
     setRunning(false);
+    if (e.status === 402) {
+      // Wallet empty — the server blocked the run before it started.
+      updateBalance(0);
+      setStatus(`<span style="color:var(--red)">⚠ ${escHtml(e.message)}</span>`);
+      $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('Out of tokens', 'Contact the admin to recharge your account.')}</td></tr>`;
+      $('cards').innerHTML = emptyState('Out of tokens', 'Contact the admin to recharge your account.');
+      return;
+    }
     setStatus(`<span>Error: ${escHtml(e.message)}</span>`);
     $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
     $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
@@ -2234,6 +2312,7 @@ async function resumeJobIfAny() {
   setRunning(data.status === 'running');
   for (const ev of (data.events || [])) addRow(ev);
   if ((data.events || []).length) jobCursor = data.cursor;
+  if (data.balance !== undefined) updateBalance(data.balance);
   if (data.status === 'running') {
     setStatus(`<span class="spin"></span><span>Resumed — ${rows.length} / ${jobTotal || '?'} checked</span>`);
     pollTimer = setTimeout(pollJob, 500);
