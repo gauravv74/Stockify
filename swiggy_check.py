@@ -39,8 +39,12 @@ async ([lat, lng]) => {
   //   * ok JSON, no storeId        -> genuinely NOT serviceable (swiggyNotPresent)
   //   * 202 / empty / non-JSON     -> stale WAF session, needs re-priming
   try {
-    const r = await fetch(`/api/instamart/home/v2?lat=${lat}&lng=${lng}`, {headers:{accept:'application/json'}});
+    // Abort a stalled fetch so page.evaluate() can never hang the worker.
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), 20000);
+    const r = await fetch(`/api/instamart/home/v2?lat=${lat}&lng=${lng}`, {headers:{accept:'application/json'}, signal: ac.signal});
     const t = await r.text();
+    clearTimeout(to);
     const m = t.match(/storeId=(\d+)/);
     let ok = false;
     try { JSON.parse(t); ok = true; } catch (e) {}
@@ -61,8 +65,11 @@ async ([storeId, q]) => {
     facets: [], sortAttribute: '', query: q, search_results_offset: '0',
     page_type: 'INSTAMART_AUTO_SUGGEST_PAGE', is_pre_search_tag: false,
   });
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), 20000);
   const r = await fetch(u, {method: 'POST',
-    headers: {'content-type': 'application/json', accept: 'application/json'}, body});
+    headers: {'content-type': 'application/json', accept: 'application/json'}, body, signal: ac.signal});
+  clearTimeout(to);
   if (r.status !== 200) return {status: r.status, items: null};
   const txt = await r.text();
   if (!txt) return {status: 200, items: null, empty: true};
@@ -170,6 +177,18 @@ class SwiggyInstamart:
     def _run(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
+    def _run_bounded(self, coro, timeout):
+        """Run ``coro`` with a hard wall-clock ceiling.
+
+        ``asyncio.wait_for`` cancels the coroutine (and the pending Playwright
+        promise) after ``timeout`` so the event loop is freed; the extra margin
+        on ``.result()`` guarantees this worker thread can never block forever
+        even if cancellation itself stalls.
+        """
+        fut = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(coro, timeout=timeout), self._loop)
+        return fut.result(timeout=timeout + 15)
+
     async def _ensure(self):
         if self._page is not None:
             return
@@ -234,7 +253,10 @@ class SwiggyInstamart:
                 await self._browser.close()
         except Exception:
             pass
-        self._pw = self._browser = self._ctx = self._page = None
+        finally:
+            # Always drop the handles (even if close() was cancelled on timeout)
+            # so _ensure() rebuilds a fresh browser on the next check.
+            self._pw = self._browser = self._ctx = self._page = None
 
     async def _store_lookup(self, lat, lon):
         """Resolve a storeId, re-priming once if the WAF session looks stale.
@@ -348,11 +370,14 @@ class SwiggyInstamart:
         """Return dict: {serviceable, store, items:[{name,brand,variant,inStock,mrp,price,eta}]}."""
         with self._lock:
             try:
-                return self._run(self._query(lat, lon, query))
+                return self._run_bounded(
+                    self._query(lat, lon, query), config.SCRAPER_CHECK_TIMEOUT_SEC)
             except Exception as e:
-                # hard failure -> reset browser so next call re-initialises
+                # Timeout or hard failure -> reset the browser so the next call
+                # re-initialises from a clean session (a wedged Chromium would
+                # otherwise make every subsequent check fail too).
                 try:
-                    self._run(self._reset())
+                    self._run_bounded(self._reset(), 30)
                 except Exception:
                     pass
                 return {"serviceable": None, "store": None, "items": [], "error": str(e)}

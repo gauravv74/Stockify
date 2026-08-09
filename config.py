@@ -139,6 +139,12 @@ WATCH_PAUSE_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_SEC", "1.5"))
 # limiters (e.g. Swiggy Instamart's CloudFront JA4 limiter) are easier to trip
 # with clockwork-regular traffic, so a little randomness helps.
 WATCH_PAUSE_JITTER_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_JITTER_SEC", "1.5"))
+# Hard ceiling (seconds) on a single browser-backed availability check
+# (Instamart / Zepto). A stalled in-page fetch through a metered proxy can
+# otherwise hang Playwright's promise forever, freezing the whole watch loop.
+# On timeout we cancel the operation and reset the browser so the next check
+# starts clean. Generous enough to cover a worst-case WAF re-prime.
+SCRAPER_CHECK_TIMEOUT_SEC = float(os.environ.get("STOCKLY_SCRAPER_CHECK_TIMEOUT_SEC", "120"))
 
 # Per-platform minimum spacing (seconds) between two *consecutive* checks of
 # that platform, to dodge fingerprint/cadence rate limits. Swiggy Instamart's
