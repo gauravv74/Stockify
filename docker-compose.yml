@@ -230,8 +230,14 @@ services:
     expose:
       - "3001"
 
+  # Plain-HTTP proxy for IP-only / LAN deployments. Behind a profile so the
+  # HTTPS path (docker-compose.caddy.yml) can layer Caddy on top of this same
+  # file instead of maintaining a second copy of every service.
+  #   HTTP:  docker compose --profile nginx up -d
+  #   HTTPS: docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
   nginx:
     image: nginx:1.27-alpine
+    profiles: ["nginx"]
     restart: unless-stopped
     depends_on:
       - api

@@ -69,13 +69,18 @@ if [ -n "$STOCKLY_DOMAIN" ]; then
     echo "STOCKLY_COOKIE_SECURE=1" >> .env
   fi
   export STOCKLY_DOMAIN
-  COMPOSE_FILES=(-f docker-compose.caddy.yml)
+  # Caddy is an overlay on the base stack, not a replacement for it.
+  COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.caddy.yml)
 else
-  COMPOSE_FILES=(-f docker-compose.yml)
+  COMPOSE_FILES=(-f docker-compose.yml --profile nginx)
 fi
 
 echo "==> Building and starting containers..."
-sudo -E docker compose "${COMPOSE_FILES[@]}" up -d --build
+# --remove-orphans matters on the upgrade to the queued stack: the old
+# single-container topology had services named `stockly` and `worker`, and
+# without this they keep running alongside the new ones, writing to the same
+# SQLite volume.
+sudo -E docker compose "${COMPOSE_FILES[@]}" up -d --build --remove-orphans
 
 echo "==> Waiting for health check..."
 HEALTH_URL="http://127.0.0.1/api/health"
