@@ -583,71 +583,114 @@ body.nav-collapsed .app-main { margin-left: var(--sidebar-w-collapsed); }
   gap: var(--s-5);
   align-items: start;
 }
-/* Once a run starts the query collapses to a summary bar, so results get the
-   full width instead of sitting next to a form nobody is editing any more. */
-body.query-collapsed .layout { grid-template-columns: minmax(0, 1fr); }
-
+/* The query panel stays put for the whole run. It used to collapse to a
+   summary bar so results got the full width, but the Stop button lives in the
+   panel, so collapsing it left no way to cancel a run in progress. */
 .query-panel { position: sticky; top: calc(var(--topbar-h) + var(--s-6)); }
-body.query-collapsed .query-panel { display: none; }
-
-/* Collapsed query summary */
-.query-summary { display: none; margin-bottom: var(--s-4); }
-body.query-collapsed .query-summary { display: block; }
-.query-summary-inner {
-  display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;
-  padding: var(--s-3) var(--s-4);
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-lg); box-shadow: var(--sh-xs);
-}
-.qs-items { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; flex: 1; min-width: 0; }
-.qs-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px var(--s-3); font-size: 12.5px; font-weight: 550; color: var(--text-2);
-  background: var(--n-100); border-radius: var(--r-full);
-}
-.qs-chip strong { color: var(--text); font-weight: 600; }
-.qs-chip svg { color: var(--text-4); flex: none; }
 
 /* Stepper */
-.stepper { display: flex; align-items: center; gap: var(--s-1); padding: 0 var(--s-5) var(--s-4); }
-.step { display: flex; align-items: center; gap: var(--s-2); flex: none; }
-.step-dot {
-  width: 20px; height: 20px; flex: none;
-  display: grid; place-items: center;
-  font-size: 10.5px; font-weight: 650;
-  color: var(--text-2); background: var(--n-100);
+/* Step numbers live on the section labels rather than in a separate progress
+   row. The row duplicated the labels directly beneath it and, because the form
+   arrives pre-filled, always rendered as complete — chrome, not guidance. */
+/* The label itself becomes the flex row: relying on inline layout put the
+   badge and the label text on separate line boxes. */
+.step-field > label,
+.step-field .prod-head > label { display: flex; align-items: center; }
+.step-n {
+  width: 18px; height: 18px; flex: none;
+  display: grid; place-items: center; margin-right: var(--s-2);
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--text-3); background: var(--n-100);
+  border: 1px solid var(--line);
   border-radius: 50%;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
+              border-color var(--dur) var(--ease);
+}
+.step-field.done .step-n {
+  color: var(--n-0); background: var(--p-600); border-color: var(--p-600);
+  font-size: 0;
+}
+/* Swap the numeral for a tick once the step is satisfied. */
+.step-field.done .step-n::after {
+  content: '✓'; font-size: 10px; line-height: 1;
+}
+.step-field.todo .step-n {
+  color: var(--p-700); background: var(--p-50); border-color: var(--p-300);
 }
 .step-name { font-size: 11.5px; font-weight: 550; color: var(--text-3); }
-.step.done .step-dot { color: var(--n-0); background: var(--ok-500); }
-.step.done .step-name { color: var(--text-2); }
-.step.current .step-dot { color: var(--n-0); background: var(--p-600); box-shadow: 0 0 0 3px var(--p-100); }
-.step.current .step-name { color: var(--text); font-weight: 600; }
-.step-line { flex: 1; height: 1px; min-width: var(--s-2); background: var(--line); }
-
-/* Platform picker */
-.plat-picker { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+/* Platform scope bar — one horizontal row across the page. All nine fit at
+   desktop width, so nothing wraps; below that the row scrolls sideways rather
+   than breaking into ragged lines. */
+.platform-bar {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-xs);
+}
+.platform-bar-label {
+  flex: none; padding-left: var(--s-2);
+  font-size: 12px; font-weight: 600; color: var(--text-3);
+}
+.plat-picker {
+  display: flex; align-items: center; gap: var(--s-1);
+  min-width: 0; overflow-x: auto; scrollbar-width: none;
+  /* Scroll shadows. The `local` layers scroll with the content and sit over
+     the fixed `scroll` shadows, so each edge shadow only shows while there is
+     actually more to scroll to on that side. Without this the row just ends
+     mid-pill and the remaining platforms look like they don't exist. */
+  background:
+    linear-gradient(to right, var(--surface), transparent) left / 28px 100% no-repeat local,
+    linear-gradient(to left, var(--surface), transparent) right / 28px 100% no-repeat local,
+    linear-gradient(to right, rgba(15,23,42,.10), transparent) left / 10px 100% no-repeat scroll,
+    linear-gradient(to left, rgba(15,23,42,.10), transparent) right / 10px 100% no-repeat scroll;
+}
+.plat-picker::-webkit-scrollbar { display: none; }
 .plat {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px var(--s-3);
+  display: inline-flex; align-items: center; gap: var(--s-2); flex: none;
+  min-height: 32px; padding: 0 var(--s-3);
   font-family: inherit; font-size: 12.5px; font-weight: 550; color: var(--text-2);
-  background: var(--surface); border: 1px solid var(--line-strong);
-  border-radius: var(--r-full); cursor: pointer; white-space: nowrap;
+  white-space: nowrap;
+  background: transparent; border: 1px solid transparent;
+  border-radius: var(--r-md); cursor: pointer;
   transition: all var(--dur) var(--ease);
 }
-.plat:hover:not(:disabled):not(.active) { border-color: var(--n-400); background: var(--n-50); color: var(--text); }
+.plat:hover:not(:disabled):not(.active) { background: var(--n-100); color: var(--text); }
 .plat.active {
   color: var(--n-0); background: var(--n-900);
   border-color: var(--n-900); box-shadow: none;
 }
 .plat:disabled { opacity: .45; cursor: not-allowed; }
 .plat.hidden { display: none; }
-.plat .dot { width: 7px; height: 7px; border-radius: 2px; background: var(--dot, var(--n-400)); flex: none; }
+.plat .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--n-400)); flex: none; }
+
+/* "All platforms" is a scope choice rather than a tenth peer, so it sits
+   ahead of the list behind a divider. */
+.plat.all-plat {
+  margin-right: var(--s-2);
+  border-right: 1px solid var(--line);
+  border-radius: var(--r-md) 0 0 var(--r-md);
+  padding-right: var(--s-4);
+}
+.plat.all-plat.active { border-right-color: var(--n-900); }
 .plat.all-plat .dot {
-  background: linear-gradient(135deg, #f59e0b 0%, #ea580c 25%, #7c3aed 50%, #2874f0 75%, #14b8a6 100%);
+  width: 9px; height: 9px;
+  background: conic-gradient(#f59e0b, #ea580c, #7c3aed, #2874f0, #65a30d, #14b8a6, #f59e0b);
 }
 .plat .label-short { display: none; }
+
+/* Below desktop the full names stop fitting, so swap in the short ones and
+   let the row scroll. */
+@media (max-width: 1180px) {
+  .plat .label-full { display: none; }
+  .plat .label-short { display: inline; }
+}
+@media (max-width: 720px) {
+  .platform-bar { gap: var(--s-2); padding: var(--s-2); }
+  .platform-bar-label { display: none; }
+}
 
 /* Location panels */
 .loc-panel { display: none; margin-top: var(--s-4); }
@@ -731,9 +774,21 @@ body.query-collapsed .query-summary { display: block; }
 .po-stock.out { color: var(--n-600); background: var(--n-100); }
 
 /* Run action */
-.sticky-actions { margin-top: var(--s-5); }
+/* The panel runs taller than the viewport once a city list and nine platforms
+   are on screen, which pushed the primary action out of reach. Pin it to the
+   bottom of the panel, bleeding to the panel edges so content scrolls under a
+   solid bar rather than showing through it. */
+.sticky-actions {
+  position: sticky; bottom: 0; z-index: 2;
+  margin: var(--s-5) calc(var(--s-5) * -1) calc(var(--s-5) * -1);
+  padding: var(--s-3) var(--s-5);
+  background: var(--surface);
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+}
 .actions { display: flex; gap: var(--s-2); }
 .actions .btn { flex: 1; }
+.seg-hint { display: block; margin-top: var(--s-2); }
 
 /* ── Search: results ────────────────────────────────────────────────────── */
 .results-head {
@@ -787,6 +842,8 @@ body.running .run-card, .run-card.show { display: block; }
   border-radius: var(--r-full); overflow: hidden;
 }
 .progress > div {
+  position: relative;   /* contains the sheen below; without it the sheen sizes
+                           itself against the viewport and covers the whole UI */
   height: 100%; width: 0;
   background: linear-gradient(90deg, var(--p-500), var(--p-600));
   border-radius: var(--r-full);
@@ -794,6 +851,7 @@ body.running .run-card, .run-card.show { display: block; }
 }
 body.running .progress > div::after {
   content: ''; position: absolute; inset: 0;
+  pointer-events: none;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent);
 }
 
@@ -1460,6 +1518,52 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
     <!-- ── View: Availability ─────────────────────────────────────────── -->
     <div class="view active" id="viewSearch">
       <div class="page">
+
+        <!-- Platform scope — spans the page because it applies to the whole
+             view, and nine options fit one row here instead of wrapping
+             raggedly inside the narrow query panel. -->
+        <div class="platform-bar">
+          <span class="platform-bar-label">Platform</span>
+          <div class="plat-picker platforms" role="tablist" aria-label="Platform">
+            <button class="plat all-plat" data-platform="all" role="tab" aria-selected="false">
+              <span class="dot"></span>
+              <span class="label-full">All platforms</span><span class="label-short">All</span>
+            </button>
+            <button class="plat active" data-platform="blinkit" role="tab" aria-selected="true">
+              <span class="dot" style="--dot:#f59e0b"></span>
+              <span class="label-full">Blinkit</span><span class="label-short">Blinkit</span>
+            </button>
+            <button class="plat" data-platform="instamart" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#ea580c"></span>
+              <span class="label-full">Swiggy Instamart</span><span class="label-short">Instamart</span>
+            </button>
+            <button class="plat" data-platform="zepto" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#7c3aed"></span>
+              <span class="label-full">Zepto</span><span class="label-short">Zepto</span>
+            </button>
+            <button class="plat" data-platform="bigbasket" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#65a30d"></span>
+              <span class="label-full">BigBasket</span><span class="label-short">BB</span>
+            </button>
+            <button class="plat" data-platform="flipkart" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#2874f0"></span>
+              <span class="label-full">Flipkart Minutes</span><span class="label-short">Minutes</span>
+            </button>
+            <button class="plat" data-platform="jiomart" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#e4002b"></span>
+              <span class="label-full">JioMart</span><span class="label-short">JioMart</span>
+            </button>
+            <button class="plat" data-platform="apple" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#555555"></span>
+              <span class="label-full">Apple</span><span class="label-short">Apple</span>
+            </button>
+            <button class="plat" data-platform="croma" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#14b8a6"></span>
+              <span class="label-full">Croma</span><span class="label-short">Croma</span>
+            </button>
+          </div>
+        </div>
+
         <div class="layout">
 
           <!-- Query builder -->
@@ -1470,22 +1574,12 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                 <span class="count" id="queryCost"></span>
               </div>
 
-              <div class="stepper" id="stepper" aria-hidden="true">
-                <div class="step current" id="step1"><span class="step-dot">1</span><span class="step-name">Product</span></div>
-                <span class="step-line"></span>
-                <div class="step" id="step2"><span class="step-dot">2</span><span class="step-name">Location</span></div>
-                <span class="step-line"></span>
-                <div class="step" id="step3"><span class="step-dot">3</span><span class="step-name">Platform</span></div>
-                <span class="step-line"></span>
-                <div class="step" id="step4"><span class="step-dot">4</span><span class="step-name">Run</span></div>
-              </div>
-
-              <div class="panel-body" style="padding-top:0;">
+              <div class="panel-body">
 
                 <!-- Step 1 — Product -->
-                <div class="field">
+                <div class="field step-field" id="step1">
                   <div class="field-label prod-head">
-                    <label for="products" style="margin:0;">Product</label>
+                    <label for="products" style="margin:0;"><span class="step-n" aria-hidden="true">1</span>Product</label>
                     <button type="button" class="link-btn" id="findProductsBtn">Find on platform</button>
                   </div>
                   <input type="text" id="products" value="iphone 17" placeholder="e.g. iphone 17, amul milk" autocomplete="off" />
@@ -1498,13 +1592,14 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                 </div>
 
                 <!-- Step 2 — Location -->
-                <div class="field">
-                  <label>Location</label>
+                <div class="field step-field" id="step2">
+                  <label><span class="step-n" aria-hidden="true">2</span>Location</label>
                   <div class="seg" role="tablist" aria-label="Location mode">
                     <button type="button" class="active" data-loc="cities" id="locCities">Cities</button>
                     <button type="button" data-loc="pincodes" id="locPins">Pincodes</button>
                     <button type="button" data-loc="both" id="locBoth">Both</button>
                   </div>
+                  <span class="field-hint seg-hint">A city expands to every pincode mapped to it; pincode mode checks only the codes you enter.</span>
 
                   <div class="loc-panel active" id="panelCities">
                     <div class="city-tools">
@@ -1522,49 +1617,6 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                   </div>
                 </div>
 
-                <!-- Step 3 — Platform -->
-                <div class="field">
-                  <label>Platform</label>
-                  <div class="plat-picker platforms" role="tablist" aria-label="Platform">
-                    <button class="plat all-plat" data-platform="all" role="tab" aria-selected="false">
-                      <span class="dot"></span>
-                      <span class="label-full">All platforms</span><span class="label-short">All</span>
-                    </button>
-                    <button class="plat active" data-platform="blinkit" role="tab" aria-selected="true">
-                      <span class="dot" style="--dot:#f59e0b"></span>
-                      <span class="label-full">Blinkit</span><span class="label-short">Blinkit</span>
-                    </button>
-                    <button class="plat" data-platform="instamart" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#ea580c"></span>
-                      <span class="label-full">Swiggy Instamart</span><span class="label-short">Instamart</span>
-                    </button>
-                    <button class="plat" data-platform="zepto" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#7c3aed"></span>
-                      <span class="label-full">Zepto</span><span class="label-short">Zepto</span>
-                    </button>
-                    <button class="plat" data-platform="bigbasket" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#65a30d"></span>
-                      <span class="label-full">BigBasket</span><span class="label-short">BB</span>
-                    </button>
-                    <button class="plat" data-platform="flipkart" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#2874f0"></span>
-                      <span class="label-full">Flipkart Minutes</span><span class="label-short">Minutes</span>
-                    </button>
-                    <button class="plat" data-platform="jiomart" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#e4002b"></span>
-                      <span class="label-full">JioMart</span><span class="label-short">JioMart</span>
-                    </button>
-                    <button class="plat" data-platform="apple" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#555555"></span>
-                      <span class="label-full">Apple</span><span class="label-short">Apple</span>
-                    </button>
-                    <button class="plat" data-platform="croma" role="tab" aria-selected="false">
-                      <span class="dot" style="--dot:#14b8a6"></span>
-                      <span class="label-full">Croma</span><span class="label-short">Croma</span>
-                    </button>
-                  </div>
-                </div>
-
                 <!-- Step 4 — Run -->
                 <div class="sticky-actions">
                   <div class="actions">
@@ -1575,22 +1627,12 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                     <button class="btn btn-danger btn-lg" id="stopBtn" style="display:none;">Stop</button>
                   </div>
                 </div>
-                <p class="hint desk-only" style="margin-top:12px;">
-                  City mode expands every mapped pincode. Pincode mode targets specific codes.
-                </p>
               </div>
             </div>
           </aside>
 
           <!-- Results -->
           <section>
-            <div class="query-summary" id="querySummary">
-              <div class="query-summary-inner">
-                <div class="qs-items" id="qsItems"></div>
-                <button type="button" class="btn btn-sm" id="queryEditBtn">Edit query</button>
-              </div>
-            </div>
-
             <div class="run-card" id="runCard">
               <div class="run-top">
                 <span class="spin" id="runSpin"></span>
@@ -1927,6 +1969,9 @@ let platform = 'blinkit';
 
 // ── Background search job state (keeps a run alive across tab switches) ──────
 let activeJobId = null;
+// Stop becomes clickable the moment a run starts, which is before /api/check/start
+// has answered with a job id. This carries the intent across that gap.
+let stopRequested = false;
 let jobCursor = 0;
 let jobTotal = 0;
 let pollTimer = null;
@@ -3237,9 +3282,25 @@ async function pollJob() {
   }
 }
 
+// Detach the client immediately so Stop feels instant. Previously we only
+// showed "Stopping…" and waited for the server to flip to 'canceled', but the
+// poll loop overwrote that message on its next tick and kept ingesting rows,
+// and a single in-flight check (e.g. Instamart's WAF priming) could block the
+// server-side cancel for tens of seconds — so Stop looked like it did nothing.
+// Now we finalize what we have and stop polling right away; the server-side job
+// winds down on its own once it sees the cancel flag (checked between checks),
+// and any rows it produces afterwards are simply never polled.
+async function cancelJob(id) {
+  finalizeResultsOrder();
+  finishRun('canceled');
+  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: id }) }); }
+  catch (_) {}
+}
+
 async function run() {
   if (!validateLocation()) return;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  stopRequested = false;
   const payload = buildPayload();
 
   rows = [];
@@ -3253,7 +3314,6 @@ async function run() {
   $('cards').innerHTML = emptyState('Starting…', 'Runs in the background — safe to switch tabs or lock your phone.');
   $('bar').style.width = '0%';
   setRunning(true);
-  collapseQuery();
   startRunTimer();
   setRunTitle('Starting…');
   $('runCard').classList.add('show');
@@ -3268,6 +3328,7 @@ async function run() {
     saveActiveJob(activeJobId);
     if (data.balance !== undefined) updateBalance(data.balance);
     renderMeta(data.meta);
+    if (stopRequested) { stopRequested = false; await cancelJob(activeJobId); return; }
     pollJob();
   } catch (e) {
     if (e.status === 401) { currentUser = null; applyAuthUI(); }
@@ -3304,8 +3365,6 @@ async function resumeJobIfAny() {
   resetCounts();
   renderMeta(data.meta);
   setRunning(isActiveStatus(data.status));
-  // Reattaching to a run should look like the run we left, not a blank form.
-  collapseQuery();
   $('runCard').classList.add('show');
   if (isActiveStatus(data.status)) startRunTimer();
   for (const ev of (data.events || [])) addRow(ev);
@@ -3823,62 +3882,21 @@ function estimateChecks() {
   return products * pins * plats;
 }
 
+// Marks each section's number as satisfied or still outstanding. Platform
+// isn't a step: it's picked in the bar above the page and always has a value.
 function updateStepper() {
   const { hasProduct, hasLocation } = queryState();
-  const done = [hasProduct, hasLocation, true];
-  const steps = ['step1', 'step2', 'step3'];
-  let currentIdx = done.findIndex(d => !d);
-  if (currentIdx === -1) currentIdx = 3;
-  steps.forEach((id, i) => {
+  [['step1', hasProduct], ['step2', hasLocation]].forEach(([id, ok]) => {
     const el = $(id);
     if (!el) return;
-    el.classList.toggle('done', done[i] && i < currentIdx);
-    el.classList.toggle('current', i === currentIdx);
+    el.classList.toggle('done', !!ok);
+    el.classList.toggle('todo', !ok);
   });
-  const s4 = $('step4');
-  if (s4) {
-    s4.classList.toggle('current', currentIdx === 3);
-    s4.classList.remove('done');
-  }
 
   const n = estimateChecks();
   $('queryCost').textContent = n ? `~${n.toLocaleString('en-IN')} checks` : '';
   $('runBtn').disabled = !(hasProduct && hasLocation);
 }
-
-// ── Collapsed query summary ─────────────────────────────────────────────────
-function chip(icon, label, value) {
-  return `<span class="qs-chip">${icon}${escHtml(label)} <strong>${escHtml(value)}</strong></span>`;
-}
-const ICON_BOX  = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>';
-const ICON_PIN  = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>';
-const ICON_GRID = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>';
-
-function renderQuerySummary() {
-  const product = $('products').value.trim() || '—';
-  const cityNames = citiesCatalog.filter(c => selectedCities.has(c.id)).map(c => c.name);
-  let where = '';
-  if (locMode === 'pincodes') {
-    where = `${rawPinCount()} pincode${rawPinCount() === 1 ? '' : 's'}`;
-  } else {
-    where = cityNames.length <= 2 ? cityNames.join(', ') : `${cityNames.length} cities`;
-    if (locMode === 'both' && rawPinCount()) where += ` + ${rawPinCount()} pins`;
-  }
-  const platLabel = platform === 'all' ? 'All platforms' : (PLAT_LABEL[platform] || platform);
-  $('qsItems').innerHTML =
-    chip(ICON_BOX, 'Product', product) +
-    chip(ICON_PIN, 'Location', where || '—') +
-    chip(ICON_GRID, 'Platform', platLabel);
-}
-
-function collapseQuery() {
-  renderQuerySummary();
-  document.body.classList.add('query-collapsed');
-}
-function expandQuery() {
-  document.body.classList.remove('query-collapsed');
-}
-$('queryEditBtn').addEventListener('click', expandQuery);
 
 // ── Run progress ────────────────────────────────────────────────────────────
 let runStartedAt = null;
@@ -3956,7 +3974,6 @@ document.querySelectorAll('#statusFilters .stat').forEach(btn => {
 
 // ── Guide ───────────────────────────────────────────────────────────────────
 $('topbarHelp').addEventListener('click', () => {
-  expandQuery();
   setView('search');
   setStatus('<span>Pick a <strong>product</strong>, choose <strong>cities or pincodes</strong>, select a <strong>platform</strong>, then hit <strong>Check availability</strong>. Results stream in as each location is checked, and the run continues on our servers even if you close the page.</span>');
 });
@@ -3971,20 +3988,16 @@ $('clearCities').addEventListener('click', () => setTimeout(updateStepper, 0));
 
 $('runBtn').addEventListener('click', run);
 $('stopBtn').addEventListener('click', async () => {
-  if (!activeJobId) return;
-  const id = activeJobId;
-  // Detach the client immediately so Stop feels instant. Previously we only
-  // showed "Stopping…" and waited for the server to flip to 'canceled', but the
-  // poll loop overwrote that message on its next tick and kept ingesting rows,
-  // and a single in-flight check (e.g. Instamart's WAF priming) could block the
-  // server-side cancel for tens of seconds — so Stop looked like it did nothing.
-  // Now we finalize what we have and stop polling right away; the server-side
-  // job winds down on its own once it sees the cancel flag (checked between
-  // checks), and any rows it produces afterwards are simply never polled.
-  finalizeResultsOrder();
-  finishRun('canceled');   // clears job state, stops polling, re-enables Run
-  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: id }) }); }
-  catch (_) {}
+  if (!activeJobId) {
+    // Start is still in flight, so there is nothing to cancel yet. Acknowledge
+    // the click now and let run() cancel as soon as it has the job id.
+    if (document.body.classList.contains('running')) {
+      stopRequested = true;
+      setRunTitle('Stopping…');
+    }
+    return;
+  }
+  await cancelJob(activeJobId);
 });
 $('csvBtn').addEventListener('click', exportCSV);
 setLocMode('cities');
