@@ -1,5 +1,8 @@
 services:
-  stockly:
+  # ── Web/API tier ──────────────────────────────────────────────────────────
+  # Authenticates, authorizes, validates and enqueues. It never scrapes, so it
+  # needs no Chromium and no large /dev/shm.
+  api:
     build: .
     restart: unless-stopped
     env_file:
@@ -8,36 +11,90 @@ services:
       STOCKLY_ENV: production
       STOCKLY_DATA_DIR: /app/data
       STOCKLY_TRUST_PROXY: "1"
+      STOCKLY_REDIS_URL: redis://redis:6379/0
+      STOCKLY_WA_BRIDGE_URL: http://wa-bridge:3001
     volumes:
       - stockly_data:/app/data
       - ./cities.json:/app/cities.json:ro
     expose:
       - "5001"
-    # Chromium (Playwright) needs more than Docker's default 64MB /dev/shm
-    shm_size: "1gb"
-    # Lets the container reach a home-proxy tunnel bound on the host
-    # (STOCKLY_PROXY_SERVER=socks5://host.docker.internal:1080)
+    networks:
+      default:
+        # The service was called `stockly` before it was split into an API and
+        # workers. Keep the old DNS name resolvable so the existing nginx and
+        # Caddy upstreams keep working without a coordinated change.
+        aliases:
+          - stockly
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/api/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     # Uncomment to publish directly without nginx (LAN / testing):
     # ports:
     #   - "5001:5001"
 
-  # Stock watcher: polls every active watch on a fixed cadence and fires the
-  # WhatsApp alerts. Separate process so the Playwright/Chromium session lives
-  # in exactly one place (never forked across gunicorn workers). Shares the same
-  # SQLite DB volume as the web app to coordinate.
-  worker:
+  # ── Scraper workers ───────────────────────────────────────────────────────
+  # Split by cost profile so a slow browser platform can never starve the cheap
+  # HTTP ones. Scale each independently: `docker compose up -d --scale worker-http=3`.
+  #
+  # Blinkit, BigBasket. Pure HTTP/TLS-impersonation: cheap, no browser.
+  worker-http:
     build: .
     restart: unless-stopped
-    command: ["python", "worker.py"]
+    # 2 x 3 = 6 concurrent checks, matching STOCKLY_CONCURRENCY_BLINKIT. Until
+    # per-platform semaphores land these process/thread counts *are* the
+    # concurrency limit, so they must not exceed the configured cap: at 8 we
+    # reproducibly tripped Blinkit's rate limiter (HTTP 429, 12s backoff).
+    command: ["dramatiq", "stockly.tasks", "--queues", "http_checks",
+              "--processes", "2", "--threads", "3"]
     env_file:
       - .env
-    environment:
+    environment: &worker_env
       STOCKLY_ENV: production
       STOCKLY_DATA_DIR: /app/data
-      # Reach the WhatsApp bridge by its compose service name.
+      STOCKLY_REDIS_URL: redis://redis:6379/0
       STOCKLY_WA_BRIDGE_URL: http://wa-bridge:3001
+    volumes:
+      - stockly_data:/app/data
+      - ./cities.json:/app/cities.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    # SIGTERM lets a task finish and connections close before the container dies.
+    stop_grace_period: 60s
+    # Inherits the image's HTTP healthcheck, but this container serves
+    # no HTTP; without disabling it the service is always 'unhealthy'.
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # Zepto, Flipkart, JioMart. Headless Chromium — bounded process count and a
+  # real /dev/shm, or Chrome will crash on large pages.
+  worker-browser:
+    build: .
+    restart: unless-stopped
+    command: ["dramatiq", "stockly.tasks", "--queues", "browser_checks",
+              "--processes", "2", "--threads", "1"]
+    env_file:
+      - .env
+    environment: *worker_env
     volumes:
       - stockly_data:/app/data
       - ./cities.json:/app/cities.json:ro
@@ -45,8 +102,115 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - stockly
+      redis:
+        condition: service_healthy
+    stop_grace_period: 90s
+    # Inherits the image's HTTP healthcheck, but this container serves
+    # no HTTP; without disabling it the service is always 'unhealthy'.
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # Instamart, Apple, Croma. WAF-heavy and strictly rate limited, so this stays
+  # deliberately small — one process, one task at a time.
+  worker-protected:
+    build: .
+    restart: unless-stopped
+    command: ["dramatiq", "stockly.tasks", "--queues", "protected_checks,control",
+              "--processes", "1", "--threads", "1"]
+    env_file:
+      - .env
+    environment: *worker_env
+    volumes:
+      - stockly_data:/app/data
+      - ./cities.json:/app/cities.json:ro
+    shm_size: "1gb"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    stop_grace_period: 90s
+    # Inherits the image's HTTP healthcheck, but this container serves
+    # no HTTP; without disabling it the service is always 'unhealthy'.
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # ── Background processes ──────────────────────────────────────────────────
+  # Stock watcher: polls active watches and fires WhatsApp alerts.
+  watcher:
+    build: .
+    restart: unless-stopped
+    command: ["python", "worker.py"]
+    env_file:
+      - .env
+    environment: *worker_env
+    volumes:
+      - stockly_data:/app/data
+      - ./cities.json:/app/cities.json:ro
+    shm_size: "1gb"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
       - wa-bridge
+    stop_grace_period: 60s
+    # Inherits the image's HTTP healthcheck, but this container serves
+    # no HTTP; without disabling it the service is always 'unhealthy'.
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # Fails jobs whose workers died, so no client polls a dead job forever.
+  recovery:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "stockly.recovery"]
+    env_file:
+      - .env
+    environment: *worker_env
+    volumes:
+      - stockly_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Inherits the image's HTTP healthcheck, but this container serves
+    # no HTTP; without disabling it the service is always 'unhealthy'.
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ── Infrastructure ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Queue messages are durable enough via AOF; job state itself lives in the
+    # database, so a Redis loss costs at most the in-flight checks.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb",
+              "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768m
 
   # Self-hosted WhatsApp sender (whatsapp-web.js). Scan the QR once on first
   # boot: `docker compose logs -f wa-bridge` shows it. The linked session is
@@ -70,7 +234,7 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - stockly
+      - api
     ports:
       - "80:80"
       # For TLS, mount certs and use nginx.ssl.conf instead
@@ -81,3 +245,4 @@ services:
 volumes:
   stockly_data:
   wa_bridge_auth:
+  redis_data:

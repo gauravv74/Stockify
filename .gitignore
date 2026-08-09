@@ -1,24 +1,83 @@
-# Stockly
+# Stockly — root ignore rules.
+# mobile/ and wa-bridge/ carry their own .gitignore for their toolchains
+# (node_modules, Expo artifacts, WhatsApp session + QR); don't duplicate here.
+
+# ---------------------------------------------------------------------------
+# Secrets & runtime state — never commit
+# ---------------------------------------------------------------------------
+# Real env files, including per-host variants (.env.production is generated on
+# the VPS by deploy/ec2-bootstrap.sh with a random secret key + admin password).
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+.stockly_secret
+*.pem
+*.key
+
+# Runtime data dir: SQLite DB, secret file, geocode cache
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Legacy user store (pre-SQLite) and its migration backup
+users.json
+users.json.bak
+
+# Caches / generated output
+pincode_geocache.json
+blinkit_availability.csv
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
-.env
-data/
-*.db
-*.db-*
-.stockly_secret
-users.json
-users.json.bak
-pincode_geocache.json
-blinkit_availability.csv
-.playwright/
-.DS_Store
-*.log
-*.pem
+build/
+dist/
 
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ---------------------------------------------------------------------------
+# Browser automation
+# ---------------------------------------------------------------------------
+.playwright/
+playwright-report/
+test-results/
+
+# ---------------------------------------------------------------------------
+# Editors & OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+
+# ---------------------------------------------------------------------------
 # Large chat/agent dumps — not application code
+# ---------------------------------------------------------------------------
 Untitled-1.md
 Agent.json
 Agent-Chat.json

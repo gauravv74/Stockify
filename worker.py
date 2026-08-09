@@ -33,11 +33,9 @@ import blinkit_check as bk
 import config
 import watches
 import whatsapp
+from stockly import checks, geo, obs
 
-logging.basicConfig(
-    level=logging.INFO if config.IS_PROD else logging.DEBUG,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+obs.setup("stockly.watcher")
 log = logging.getLogger("stockly.worker")
 
 _STOP = False
@@ -98,48 +96,6 @@ def _throttle(platform):
             log.debug("throttle %s: sleeping %.1fs before next check", platform, wait)
             _interruptible_sleep(wait)
     _last_check_ts[platform] = time.monotonic()
-
-
-# ---------------------------------------------------------------------------
-# Platform dispatch (mirrors app._check_one, imported lazily to keep startup
-# light and avoid pulling every scraper unless it's actually used).
-# ---------------------------------------------------------------------------
-def _check_platform(platform, session, q, lat, lon, pin):
-    if platform == "instamart":
-        import swiggy_check as sw
-        return sw.match_row(q, sw.client.check(float(lat), float(lon), q))
-    if platform == "zepto":
-        import zepto_check as zp
-        return zp.match_row(q, zp.client.check(float(lat), float(lon), q))
-    if platform == "bigbasket":
-        import bigbasket_check as bb
-        return bb.match_row(q, bb.client.check(str(lat), str(lon), q, pin))
-    if platform == "flipkart":
-        import flipkart_check as fk
-        return fk.match_row(q, fk.client.check(float(lat), float(lon), q))
-    if platform == "jiomart":
-        import jiomart_check as jm
-        return jm.match_row(q, jm.client.check(float(lat), float(lon), q, pin))
-    if platform == "apple":
-        import apple_check as ap
-        return ap.match_row(q, ap.client.check(float(lat), float(lon), q, pin))
-    if platform == "croma":
-        import croma_check as cr
-        return cr.match_row(q, cr.client.check(float(lat), float(lon), q, pin))
-    # default: blinkit
-    serviceable, prods, code = bk.blinkit_search(session, q, lat, lon)
-    if serviceable is False:
-        return {"status": "not_serviceable"}
-    if serviceable is None:
-        return {"status": "error", "detail": f"http {code}"}
-    m = bk.best_match(q, prods)
-    if not m:
-        return {"status": "not_found"}
-    return {
-        "status": "available" if m["available"] else "out_of_stock",
-        "name": m["name"], "variant": m["variant"], "brand": m["brand"],
-        "price": m["price"], "mrp": m["mrp"], "eta": m["eta"],
-    }
 
 
 def _parse_price(value):
@@ -265,12 +221,12 @@ def _process_watch(watch, session, cache):
     q = watch["product"]
     pin = watch["pincode"]
 
-    # 1) geocode (cached across watches + persisted per-watch)
+    # 1) geocode (shared, process-safe cache; persisted per-watch)
     lat, lon, place = watch.get("lat"), watch.get("lon"), watch.get("place")
     if not lat or not lon:
-        geo = bk.geocode_pincode(pin, cache, session)
-        lat, lon, place = geo.get("lat"), geo.get("lon"), geo.get("place")
-        if lat and lon:
+        located = geo.resolve(pin, session)
+        if located:
+            lat, lon, place = located["lat"], located["lon"], located.get("place")
             watches.save_geo(wid, lat, lon, place)
             watch["place"] = place
     if not lat or not lon:
@@ -278,20 +234,17 @@ def _process_watch(watch, session, cache):
         watches.record_result(wid, "geocode_failed", False, None, False, False)
         return
 
-    # 2) check the platform (throttled for rate-limited APIs like Instamart)
+    # 2) check the platform (throttled for rate-limited APIs like Instamart).
+    # Shared with the search path so matching and status semantics can't drift.
     _throttle(platform)
-    try:
-        row = _check_platform(platform, session, q, lat, lon, pin)
-    except Exception as e:
-        log.exception("watch %s: check crashed", wid)
-        watches.record_result(wid, "error", False, {"detail": str(e)[:200]}, False, False)
-        return
+    row = checks.execute_platform_check(
+        platform, q, pin, lat=lat, lon=lon, session=session)
 
     status = row.get("status") or "error"
     available = status == "available"
 
     # 3) transient statuses: bump error streak, never alert / clobber state
-    if status in watches.TRANSIENT:
+    if watches.is_transient(status):
         watches.record_result(wid, status, False, None, False, False)
         log.info("watch %s (%s/%s @%s): transient=%s", wid, platform, q, pin, status)
         return
@@ -345,6 +298,7 @@ def main():
     signal.signal(signal.SIGTERM, _handle_stop)
 
     watches.init_db()
+    geo.init_db()
     log.info("worker up | interval=%dm tick=%ds batch=%d notify_on=%s provider=%s configured=%s",
              watches.get_interval_min(), config.WATCH_TICK_SEC, config.WATCH_BATCH,
              watches.get_notify_mode(), config.WHATSAPP_PROVIDER, whatsapp.is_configured())

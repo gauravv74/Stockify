@@ -1445,8 +1445,11 @@ async function apiJson(url, opts = {}) {
   let data = null;
   try { data = await resp.json(); } catch (_) { data = null; }
   if (!resp.ok) {
-    const err = new Error((data && data.error) || `HTTP ${resp.status}`);
+    // Limit/backpressure responses carry a human-readable `message` alongside
+    // the machine `error` code; show the sentence, not the code.
+    const err = new Error((data && (data.message || data.error)) || `HTTP ${resp.status}`);
     err.status = resp.status;
+    err.code = data && data.error;
     throw err;
   }
   return data;
@@ -2402,10 +2405,18 @@ function saveActiveJob(id) {
   try { id ? localStorage.setItem(JOB_LS_KEY, id) : localStorage.removeItem(JOB_LS_KEY); } catch (_) {}
 }
 function clearJobState() {
-  activeJobId = null; jobCursor = 0; jobTotal = 0;
+  activeJobId = null; jobCursor = 0; jobTotal = 0; idlePolls = 0;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   saveActiveJob(null);
 }
+
+// Coming back to the tab shouldn't mean waiting out a backed-off timer.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !activeJobId || polling) return;
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  idlePolls = 0;
+  pollJob();
+});
 
 function renderMeta(msg) {
   if (!msg) return;
@@ -2449,6 +2460,25 @@ function finishRun(status, detail) {
   }
 }
 
+// Adaptive polling. A flat 800ms was ~75 requests/second across 50 active
+// clients purely to ask "anything new?". Back off when a run goes quiet and
+// when the tab isn't visible; results still stream in at full speed while
+// they're actually arriving, because every hit resets the interval.
+let idlePolls = 0;
+
+// A run is still live while it's waiting for a worker ('queued') or draining
+// after a Stop ('canceling'), not just while 'running'.
+function isActiveStatus(status) {
+  return status === 'running' || status === 'queued' || status === 'canceling';
+}
+
+function nextPollDelay() {
+  if (document.hidden) return 8000;
+  if (idlePolls === 0) return 1000;   // results are flowing
+  if (idlePolls < 4) return 2000;
+  return 5000;                        // nothing new for a while
+}
+
 async function pollJob() {
   pollTimer = null;
   if (!activeJobId) return;
@@ -2479,9 +2509,14 @@ async function pollJob() {
     if (data.balance !== undefined) updateBalance(data.balance);
     const done = rows.length;
     $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
-    if (data.status === 'running') {
-      setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
-      pollTimer = setTimeout(pollJob, 800);
+    if (isActiveStatus(data.status)) {
+      if (data.status === 'queued') {
+        setStatus(`<span class="spin"></span><span>Queued — waiting for a free worker…</span>`);
+      } else {
+        setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
+      }
+      idlePolls = (data.events || []).length ? 0 : idlePolls + 1;
+      pollTimer = setTimeout(pollJob, nextPollDelay());
     } else {
       finalizeResultsOrder();
       finishRun(data.status, data.detail);
@@ -2500,6 +2535,7 @@ async function run() {
   seenSeqs.clear();
   resetCounts();
   jobCursor = 0;
+  idlePolls = 0;
   updateSortTools();
   document.body.classList.toggle('show-platform', platform === 'all');
   $('tbody').innerHTML = `<tr><td colspan="7" class="empty"><div class="empty-title">Starting…</div><div class="empty-sub">Runs in the background — safe to switch tabs or lock your phone.</div></td></tr>`;
@@ -2549,11 +2585,11 @@ async function resumeJobIfAny() {
   seenSeqs.clear();
   resetCounts();
   renderMeta(data.meta);
-  setRunning(data.status === 'running');
+  setRunning(isActiveStatus(data.status));
   for (const ev of (data.events || [])) addRow(ev);
   if ((data.events || []).length) jobCursor = data.cursor;
   if (data.balance !== undefined) updateBalance(data.balance);
-  if (data.status === 'running') {
+  if (isActiveStatus(data.status)) {
     setStatus(`<span class="spin"></span><span>Resumed — ${rows.length} / ${jobTotal || '?'} checked</span>`);
     pollTimer = setTimeout(pollJob, 500);
   } else {

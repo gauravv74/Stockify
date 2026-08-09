@@ -29,6 +29,20 @@ _initialized = False
 TRANSIENT = {"error", "geocode_failed", ""}
 
 
+def is_transient(status) -> bool:
+    """True when ``status`` means "we couldn't get an answer".
+
+    Prefix-aware: Blinkit reports coded failures like ``error_403``/``error_429``
+    while browser platforms report a bare ``error``. Matching ``TRANSIENT`` by
+    exact membership let coded errors through as if they were a real state
+    change, which clobbers the last good state and can fire a false alert on
+    the next recovery.
+    """
+    if not status:
+        return True
+    return status == "geocode_failed" or str(status).startswith("error")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -302,7 +316,7 @@ def record_result(watch_id, status, available, detail, changed, notified,
     now = _now()
     detail_json = json.dumps(detail) if detail is not None else None
     with _conn() as conn:
-        if status in TRANSIENT:
+        if is_transient(status):
             conn.execute(
                 """UPDATE watches
                    SET last_checked_at = ?, check_count = check_count + 1,

@@ -102,7 +102,7 @@ def _india_post_place(session, pin):
     return None
 
 
-def geocode_pincode(pin, cache, session):
+def geocode_pincode(pin, cache, session, persist=True):
     if pin in cache and cache[pin].get("lat"):
         return cache[pin]
     result = {"lat": None, "lon": None, "place": None}
@@ -135,7 +135,11 @@ def geocode_pincode(pin, cache, session):
             time.sleep(GEO_PAUSE)
 
     cache[pin] = result
-    save_cache(cache)
+    # Callers that own a shared/multi-process cache (see stockly/geo.py) persist
+    # the result themselves; rewriting the whole JSON file from several worker
+    # processes loses updates and can truncate it.
+    if persist:
+        save_cache(cache)
     time.sleep(GEO_PAUSE)
     return result
 

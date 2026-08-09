@@ -146,6 +146,102 @@ WATCH_PAUSE_JITTER_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_JITTER_SEC", 
 # starts clean. Generous enough to cover a worst-case WAF re-prime.
 SCRAPER_CHECK_TIMEOUT_SEC = float(os.environ.get("STOCKLY_SCRAPER_CHECK_TIMEOUT_SEC", "120"))
 
+# ───────────────────────────────────────────────────────────────────────────
+# Execution model — queued checks (Redis + Dramatiq)
+#
+# Scraping must not run inside the web tier: Playwright/Chromium, gunicorn
+# threads and SQLite writes otherwise compete for the same CPU/RAM, and a
+# worker recycle kills in-flight searches. The API now only enqueues one task
+# per (platform × product × pincode); dedicated worker processes execute them.
+# ───────────────────────────────────────────────────────────────────────────
+REDIS_URL = os.environ.get("STOCKLY_REDIS_URL", "redis://127.0.0.1:6379/0").strip()
+
+# Master switch. When off (or Redis is unreachable at start-up) the API falls
+# back to the legacy in-process daemon thread, so this migration can be rolled
+# back without redeploying old code. Set to 0 for the pre-queue behaviour.
+QUEUE_ENABLED = _env_flag("STOCKLY_QUEUE_ENABLED", True)
+
+# Queue names. Platforms are grouped by cost profile so a cheap HTTP platform
+# can never be starved by an expensive browser one, and so each group can be
+# scaled (and concurrency-capped) independently.
+QUEUE_HTTP = "http_checks"            # pure HTTP/TLS-impersonation scrapers
+QUEUE_BROWSER = "browser_checks"      # headless Chromium scrapers
+QUEUE_PROTECTED = "protected_checks"  # real-Chrome / WAF-heavy scrapers
+QUEUE_CONTROL = "control"             # dispatch, finalise, maintenance
+
+PLATFORM_QUEUE = {
+    "blinkit": QUEUE_HTTP,
+    "bigbasket": QUEUE_HTTP,
+    "zepto": QUEUE_BROWSER,
+    "flipkart": QUEUE_BROWSER,
+    "jiomart": QUEUE_BROWSER,
+    "instamart": QUEUE_PROTECTED,
+    "croma": QUEUE_PROTECTED,
+    "apple": QUEUE_PROTECTED,
+}
+
+
+def _conc(platform, default):
+    return int(os.environ.get(f"STOCKLY_CONCURRENCY_{platform.upper()}", str(default)))
+
+
+# Per-platform ceiling on simultaneous checks. Deliberately conservative:
+# 50 concurrent *users* must not mean 50 concurrent browsers. Retailer rate
+# limits, not CPU, are the binding constraint for the protected platforms.
+PLATFORM_CONCURRENCY = {
+    "blinkit": _conc("blinkit", 6),
+    "bigbasket": _conc("bigbasket", 4),
+    "zepto": _conc("zepto", 2),
+    "flipkart": _conc("flipkart", 2),
+    "jiomart": _conc("jiomart", 2),
+    "instamart": _conc("instamart", 2),
+    "croma": _conc("croma", 1),
+    "apple": _conc("apple", 1),
+}
+
+# Fairness: cap how many checks of a single job may be in flight at once, so a
+# 5,000-check search cannot monopolise the workers ahead of a 10-check one.
+MAX_INFLIGHT_CHECKS_PER_JOB = int(
+    os.environ.get("STOCKLY_MAX_INFLIGHT_CHECKS_PER_JOB", "8"))
+
+# Safety limits — exceeded requests get a clear 4xx, never a crash.
+MAX_ACTIVE_JOBS_PER_USER = int(os.environ.get("STOCKLY_MAX_ACTIVE_JOBS_PER_USER", "2"))
+MAX_SEARCH_CHECKS = int(os.environ.get("STOCKLY_MAX_SEARCH_CHECKS", "5000"))
+MAX_QUEUED_CHECKS_PER_USER = int(
+    os.environ.get("STOCKLY_MAX_QUEUED_CHECKS_PER_USER", "2000"))
+MAX_TOTAL_QUEUED_CHECKS = int(os.environ.get("STOCKLY_MAX_TOTAL_QUEUED_CHECKS", "20000"))
+
+# Timeouts. Every retailer interaction is bounded so one hung request can never
+# permanently occupy a worker.
+HTTP_CHECK_TIMEOUT_SEC = float(os.environ.get("STOCKLY_HTTP_CHECK_TIMEOUT_SEC", "15"))
+BROWSER_CHECK_TIMEOUT_SEC = float(
+    os.environ.get("STOCKLY_BROWSER_CHECK_TIMEOUT_SEC", "40"))
+# Absolute ceiling for one task, whatever the platform.
+TASK_MAX_TIMEOUT_SEC = float(os.environ.get("STOCKLY_TASK_MAX_TIMEOUT_SEC", "60"))
+
+# Retries apply only to *infrastructure* failures (timeout, reset, 5xx, 429,
+# WAF, browser crash) — never to legitimate business results.
+CHECK_MAX_RETRIES = int(os.environ.get("STOCKLY_CHECK_MAX_RETRIES", "2"))
+CHECK_RETRY_BASE_SEC = float(os.environ.get("STOCKLY_CHECK_RETRY_BASE_SEC", "5"))
+
+# A job whose workers died stops making progress; the reaper fails it rather
+# than leaving the client polling a corpse forever.
+JOB_STALE_TIMEOUT_SEC = int(os.environ.get("STOCKLY_JOB_STALE_TIMEOUT_SEC", "180"))
+RECOVERY_TICK_SEC = int(os.environ.get("STOCKLY_RECOVERY_TICK_SEC", "60"))
+
+# Structured (JSON) logs — on by default in production, off locally for
+# human-readable output.
+LOG_JSON = _env_flag("STOCKLY_LOG_JSON", IS_PROD)
+LOG_LEVEL = os.environ.get("STOCKLY_LOG_LEVEL", "info").upper()
+
+
+def platform_timeout(platform):
+    """Hard wall-clock budget for one check on ``platform``."""
+    queue = PLATFORM_QUEUE.get(platform, QUEUE_BROWSER)
+    base = HTTP_CHECK_TIMEOUT_SEC if queue == QUEUE_HTTP else BROWSER_CHECK_TIMEOUT_SEC
+    return min(base, TASK_MAX_TIMEOUT_SEC)
+
+
 # ── Token / credit system (monetisation) ────────────────────────────────────
 # A non-admin user spends tokens per *billable* availability result (one per
 # pincode × platform × product that returns a real in-stock / out-of-stock

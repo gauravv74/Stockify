@@ -1,0 +1,7 @@
+-r requirements.txt
+
+pytest>=8.0
+pytest-cov>=5.0
+
+# Load testing (Phase 25). Run against a staging instance, never production.
+locust>=2.29

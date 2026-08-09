@@ -4,5 +4,10 @@ curl_cffi>=0.7
 requests>=2.31
 playwright==1.49.1
 
+# Task queue: the API enqueues one task per check; dedicated worker processes
+# execute them so scraping never runs inside gunicorn.
+dramatiq[redis]>=1.17
+redis>=5.0
+
 # After installing on a bare host:
 #   python3 -m playwright install --with-deps chromium

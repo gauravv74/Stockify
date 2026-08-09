@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import math
 import os
 import re
@@ -23,12 +22,9 @@ import config
 import jobs
 import watches
 import whatsapp
+from stockly import broker, checks, dispatcher, geo, obs
 
-logging.basicConfig(
-    level=logging.INFO if config.IS_PROD else logging.DEBUG,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-log = logging.getLogger("stockly")
+log = obs.setup("stockly.api")
 
 ALL_PLATFORMS = auth.ALL_PLATFORMS
 
@@ -50,6 +46,7 @@ _created_default_admin = False
 _, _created_default_admin = auth.ensure_users_file()
 watches.init_db()
 jobs.init_db()
+geo.init_db()
 if _created_default_admin:
     log.warning(
         "Default admin created (username=%s). Change password immediately.",
@@ -171,12 +168,68 @@ def index():
 
 @app.route("/api/health")
 def health():
+    """Liveness + dependency check. Deliberately terse: this is public, so it
+    reports whether each dependency is reachable, never how it's addressed."""
+    db_ok, db_detail = _probe_db()
+    redis_ok, redis_detail = broker.ping()
+
+    # The API still serves (and degrades to inline execution) without Redis, so
+    # a broker outage is reported but doesn't fail the check.
+    ok = db_ok
     return jsonify({
-        "ok": True,
+        "ok": ok,
+        "service": "stockly",
+        "env": config.ENV,
+        "checks": {
+            "database": {"ok": db_ok, "detail": db_detail},
+            "redis": {"ok": redis_ok, "detail": redis_detail},
+        },
+        "queue_enabled": config.QUEUE_ENABLED,
+        "degraded": not redis_ok,
+    }), (200 if ok else 503)
+
+
+def _probe_db():
+    try:
+        jobs.active_job_count()
+        return True, "ok"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)[:200]
+
+
+@app.route("/api/admin/health")
+@auth.admin_required
+def admin_health():
+    """Operational detail — worker queues, job counts, metrics, WhatsApp bridge.
+
+    Admin-only because queue depths and infrastructure addresses are useful to
+    an attacker sizing up the system.
+    """
+    redis_ok, redis_detail = broker.ping()
+    body = {
         "service": "stockly",
         "env": config.ENV,
         "db": str(config.DB_PATH),
-    })
+        "redis": {"ok": redis_ok, "detail": redis_detail,
+                  "url": broker._redacted(config.REDIS_URL)},
+        "queues": broker.queue_depths(),
+        "jobs": {"active": jobs.active_job_count(),
+                 "outstanding_checks": jobs.total_queued_checks()},
+        "limits": {
+            "max_active_jobs_per_user": config.MAX_ACTIVE_JOBS_PER_USER,
+            "max_search_checks": config.MAX_SEARCH_CHECKS,
+            "max_total_queued_checks": config.MAX_TOTAL_QUEUED_CHECKS,
+            "platform_concurrency": config.PLATFORM_CONCURRENCY,
+        },
+        "metrics": obs.metrics.snapshot(),
+    }
+    try:
+        r = cffi_requests.get(_bridge_url() + "/status",
+                              headers=_bridge_headers(), timeout=5)
+        body["whatsapp"] = r.json()
+    except Exception as exc:  # noqa: BLE001
+        body["whatsapp"] = {"ok": False, "error": str(exc)[:120]}
+    return jsonify(body)
 
 
 @app.route("/api/login", methods=["POST"])
@@ -372,92 +425,18 @@ def api_geocode():
     })
 
 
-def _blank_row(idx, pin, place, lat, lon, product, platform):
-    return {
-        "type": "result", "index": idx, "pincode": pin, "platform": platform,
-        "location": place or "", "lat": lat, "lon": lon, "product": product,
-        "status": "", "available": "", "name": "", "variant": "", "brand": "",
-        "price": "", "mrp": "", "inventory": "", "eta": "", "merchant_id": "",
-    }
-
-
-def _check_blinkit(session, q, lat, lon):
-    serviceable, prods, code = bk.blinkit_search(session, q, lat, lon)
-    time.sleep(bk.REQUEST_PAUSE)
-    if serviceable is False:
-        return {"status": "not_serviceable"}
-    if serviceable is None:
-        return {"status": f"error_{code}"}
-    m = bk.best_match(q, prods)
-    if not m:
-        return {"status": "not_found"}
-    return {
-        "status": "available" if m["available"] else "out_of_stock",
-        "available": "yes" if m["available"] else "no",
-        "name": m["name"], "variant": m["variant"], "brand": m["brand"],
-        "price": m["price"], "mrp": m["mrp"], "inventory": m["inventory"],
-        "eta": m["eta"], "merchant_id": m["merchant_id"],
-    }
-
-
-def _check_instamart(q, lat, lon):
-    import swiggy_check as sw
-    res = sw.client.check(float(lat), float(lon), q)
-    return sw.match_row(q, res)
-
-
-def _check_zepto(q, lat, lon):
-    import zepto_check as zp
-    res = zp.client.check(float(lat), float(lon), q)
-    return zp.match_row(q, res)
-
-
-def _check_bigbasket(q, lat, lon, pin):
-    import bigbasket_check as bb
-    res = bb.client.check(str(lat), str(lon), q, pin)
-    return bb.match_row(q, res)
-
-
-def _check_flipkart(q, lat, lon):
-    import flipkart_check as fk
-    res = fk.client.check(float(lat), float(lon), q)
-    return fk.match_row(q, res)
-
-
-def _check_jiomart(q, lat, lon, pin):
-    import jiomart_check as jm
-    res = jm.client.check(float(lat), float(lon), q, pin)
-    return jm.match_row(q, res)
-
-
-def _check_apple(q, lat, lon, pin):
-    import apple_check as ap
-    res = ap.client.check(float(lat), float(lon), q, pin)
-    return ap.match_row(q, res)
-
-
-def _check_croma(q, lat, lon, pin):
-    import croma_check as cr
-    res = cr.client.check(float(lat), float(lon), q, pin)
-    return cr.match_row(q, res)
+_blank_row = checks.blank_row
 
 
 def _check_one(platform, session, q, lat, lon, pin):
-    if platform == "instamart":
-        return _check_instamart(q, lat, lon)
-    if platform == "zepto":
-        return _check_zepto(q, lat, lon)
-    if platform == "bigbasket":
-        return _check_bigbasket(q, lat, lon, pin)
-    if platform == "flipkart":
-        return _check_flipkart(q, lat, lon)
-    if platform == "jiomart":
-        return _check_jiomart(q, lat, lon, pin)
-    if platform == "apple":
-        return _check_apple(q, lat, lon, pin)
-    if platform == "croma":
-        return _check_croma(q, lat, lon, pin)
-    return _check_blinkit(session, q, lat, lon)
+    """Single check, delegated to the shared executor.
+
+    Only the legacy inline fallback still calls this; normal runs execute in
+    the worker containers. Kept as a delegate (rather than its own dispatch
+    chain) so the two paths can never diverge again.
+    """
+    return checks.execute_platform_check(
+        platform, q, pin, lat=lat, lon=lon, session=session)
 
 
 # ---------------------------------------------------------------------------
@@ -741,16 +720,38 @@ def check_start():
         "products": products,
         "cities": selected_cities,
     }
-    job_id = jobs.create_job(user.get("id"), meta, total)
-    t = threading.Thread(
-        target=_run_check_job,
-        args=(job_id, pincodes, products, platforms),
-        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by,
-                "user_id": user.get("id"), "is_admin": is_admin},
-        daemon=True)
-    t.start()
 
-    return jsonify({"job_id": job_id, "meta": meta, "balance": None if is_admin else auth.get_balance(user.get("id"))})
+    # Hand the run to the queue. Everything above is cheap; nothing here
+    # touches a retailer, launches a browser or starts a thread, so the route
+    # returns in milliseconds regardless of how large the search is.
+    try:
+        job_id, total, queued = dispatcher.start_search(
+            user, meta, pincodes, products, platforms,
+            ref_lat=ref_lat, ref_lon=ref_lon, order_by=order_by)
+    except dispatcher.LimitExceeded as limit:
+        body, status = limit.to_response()
+        return jsonify(body), status
+
+    if not queued:
+        # Redis is down. Rather than fail the user's search, fall back to the
+        # legacy in-process runner. Degraded (scraping in the web tier again)
+        # but functional, and /api/health reports the broker as unavailable.
+        log.warning("queue unavailable — running job %s inline", job_id)
+        threading.Thread(
+            target=_run_check_job,
+            args=(job_id, pincodes, products, platforms),
+            kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by,
+                    "user_id": user.get("id"), "is_admin": is_admin},
+            daemon=True).start()
+
+    return jsonify({
+        "job_id": job_id,
+        "meta": meta,
+        "status": jobs.QUEUED if queued else jobs.RUNNING,
+        "total": total,
+        "queued": queued,
+        "balance": None if is_admin else auth.get_balance(user.get("id")),
+    }), 202
 
 
 @app.route("/api/check/poll")
