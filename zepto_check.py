@@ -91,6 +91,15 @@ class Zepto:
     def _run(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
+    def _run_bounded(self, coro, timeout):
+        """Run ``coro`` with a hard wall-clock ceiling so a stalled page fetch
+        can never freeze the watch loop. ``wait_for`` cancels the coroutine on
+        timeout; the extra margin on ``.result()`` protects the worker thread
+        even if cancellation itself stalls."""
+        fut = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(coro, timeout=timeout), self._loop)
+        return fut.result(timeout=timeout + 15)
+
     async def _ensure(self):
         if self._page is not None:
             return
@@ -110,6 +119,16 @@ class Zepto:
         if proxy:
             ctx_kwargs["proxy"] = proxy
         self._ctx = await self._browser.new_context(**ctx_kwargs)
+        # Bandwidth saver: drop heavy assets we never read (images/media/fonts).
+        # Keeps scripts/xhr/documents so the WAF challenge + API calls still work.
+        # Slashes data usage ~5-10x — important when egress is a metered
+        # residential/mobile proxy (e.g. a phone hotspot / JioFi).
+        await self._ctx.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in ("image", "media", "font")
+            else route.continue_(),
+        )
         self._page = await self._ctx.new_page()
         # Solve the AWS WAF challenge once.
         await self._page.goto("https://www.zepto.com/", wait_until="domcontentloaded", timeout=45000)
@@ -121,7 +140,10 @@ class Zepto:
                 await self._browser.close()
         except Exception:
             pass
-        self._pw = self._browser = self._ctx = self._page = None
+        finally:
+            # Always drop the handles (even if close() was cancelled on timeout)
+            # so _ensure() rebuilds a fresh browser on the next check.
+            self._pw = self._browser = self._ctx = self._page = None
 
     async def _set_location(self, lat, lon):
         # Drop any stale store so Zepto recomputes serviceability for this point.
@@ -199,10 +221,13 @@ class Zepto:
         """Return {serviceable, store, city, eta, items:[{name,variant,price,mrp,inStock}]}."""
         with self._lock:
             try:
-                return self._run(self._query(lat, lon, query))
+                return self._run_bounded(
+                    self._query(lat, lon, query), config.SCRAPER_CHECK_TIMEOUT_SEC)
             except Exception as e:
+                # Timeout / hard failure -> reset the browser so the next call
+                # re-initialises cleanly instead of inheriting a wedged session.
                 try:
-                    self._run(self._reset())
+                    self._run_bounded(self._reset(), 30)
                 except Exception:
                     pass
                 return {"serviceable": None, "store": None, "items": [], "error": str(e)}

@@ -22,6 +22,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import random
 import re
 import signal
 import time
@@ -59,6 +60,44 @@ def _handle_stop(signum, _frame):
     global _STOP
     log.info("signal %s received -> shutting down after current cycle", signum)
     _STOP = True
+
+
+# Monotonic timestamp of the last check per platform, used by _throttle() to
+# space out calls to rate-limited APIs (see config.PLATFORM_MIN_INTERVAL_SEC).
+_last_check_ts: dict[str, float] = {}
+
+
+def _interruptible_sleep(seconds):
+    """Sleep up to ``seconds`` but wake early on shutdown (2s slices)."""
+    end = time.monotonic() + seconds
+    while not _STOP:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(2.0, remaining))
+
+
+def _throttle(platform):
+    """Enforce a minimum, jittered gap between consecutive checks of a
+    rate-limited platform.
+
+    Swiggy Instamart's search endpoint is behind a CloudFront JA4 rate-limiter
+    that 403s bursts from one IP/TLS-fingerprint; spacing the calls out (with a
+    little randomness so the cadence isn't clockwork) keeps us under it. No-op
+    for platforms absent from ``config.PLATFORM_MIN_INTERVAL_SEC``.
+    """
+    min_gap = config.PLATFORM_MIN_INTERVAL_SEC.get(platform, 0.0)
+    if min_gap <= 0:
+        return
+    jitter = config.PLATFORM_JITTER_SEC.get(platform, 0.0)
+    target = min_gap + (random.uniform(0, jitter) if jitter > 0 else 0.0)
+    last = _last_check_ts.get(platform)
+    if last is not None:
+        wait = target - (time.monotonic() - last)
+        if wait > 0:
+            log.debug("throttle %s: sleeping %.1fs before next check", platform, wait)
+            _interruptible_sleep(wait)
+    _last_check_ts[platform] = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +177,15 @@ def _fmt_drop(prev_price, new_price):
     return f"💸 ₹{prev_price:g} → ₹{new_price:g} (−{pct:.0f}%)"
 
 
-def _build_message(watch, status, row, first_seen, prev_price=None, new_price=None):
+def _build_message(watch, status, row, first_seen, prev_price=None, new_price=None,
+                   threshold=None):
     plat = PLATFORM_LABEL.get(watch["platform"], watch["platform"].title())
     label = STATUS_LABEL.get(status, status.upper())
     name = row.get("name") or watch["product"]
     place = watch.get("place") or watch["pincode"]
     lines = [f"{label} — {plat}", name]
+    if threshold is not None:
+        lines.append(f"🎯 at/below target ₹{threshold:g}")
     drop = _fmt_drop(prev_price, new_price)
     if drop:
         lines.append(drop)
@@ -162,19 +204,39 @@ def _build_message(watch, status, row, first_seen, prev_price=None, new_price=No
 
 
 def _should_notify(prev_status, prev_available, new_status, new_available,
-                   prev_price=None, new_price=None):
+                   prev_price=None, new_price=None, mode=None, threshold=None):
     """Decide whether this transition warrants an alert.
 
-    Returns ``(notify, changed, first_seen)``. First observation
-    (prev_status is None) never fires in price_drop mode (no baseline to
-    compare); in the other modes it's reported as an immediate baseline.
+    Returns ``(notify, changed, first_seen)``. ``mode`` is the global alert
+    mode (defaults to the runtime setting); ``threshold`` is the per-watch
+    target price used by "threshold" mode.
     """
     first_seen = prev_status is None
     status_changed = (
         (new_status != prev_status) or (bool(new_available) != bool(prev_available))
     )
+    if mode is None:
+        mode = watches.get_notify_mode()
 
-    if config.WATCH_NOTIFY_ON == "price_drop":
+    if mode == "threshold":
+        # Alert when the item is IN STOCK and its price is at/below the target.
+        # Only fire on *entering* that state so it doesn't re-alert every cycle
+        # while it stays below the target.
+        met = (
+            threshold is not None and new_price is not None
+            and bool(new_available) and new_price <= threshold
+        )
+        prev_met = (
+            threshold is not None and prev_price is not None
+            and bool(prev_available) and prev_price <= threshold
+        )
+        price_changed = (
+            prev_price is not None and new_price is not None and new_price != prev_price
+        )
+        notify = met and not prev_met
+        return notify, (status_changed or price_changed or (met != prev_met)), first_seen
+
+    if mode == "price_drop":
         # Alert when the item is IN STOCK and its price is strictly below the
         # previously recorded price. Missing prices on either side mean
         # "unknown", so we never alert on them.
@@ -189,7 +251,7 @@ def _should_notify(prev_status, prev_available, new_status, new_available,
 
     if not status_changed:
         return False, False, first_seen
-    if config.WATCH_NOTIFY_ON == "availability":
+    if mode == "availability":
         # Only when it (re)enters stock.
         notify = bool(new_available) and not bool(prev_available)
     else:  # "change" — any meaningful status flip
@@ -216,7 +278,8 @@ def _process_watch(watch, session, cache):
         watches.record_result(wid, "geocode_failed", False, None, False, False)
         return
 
-    # 2) check the platform
+    # 2) check the platform (throttled for rate-limited APIs like Instamart)
+    _throttle(platform)
     try:
         row = _check_platform(platform, session, q, lat, lon, pin)
     except Exception as e:
@@ -238,12 +301,16 @@ def _process_watch(watch, session, cache):
     prev_available = watch.get("last_available")
     prev_price = _parse_price(watch.get("last_price"))
     new_price = _parse_price(row.get("price"))
+    threshold = _parse_price(watch.get("price_threshold"))
+    mode = watches.get_notify_mode()
     notify, changed, first_seen = _should_notify(
-        prev_status, prev_available, status, available, prev_price, new_price)
+        prev_status, prev_available, status, available, prev_price, new_price,
+        mode=mode, threshold=threshold)
 
     notified = False
     if notify:
-        msg = _build_message(watch, status, row, first_seen, prev_price, new_price)
+        msg = _build_message(watch, status, row, first_seen, prev_price, new_price,
+                             threshold=threshold if mode == "threshold" else None)
         to = watch.get("notify_to") or None
         ok, detail = whatsapp.send(msg, to=to)
         notified = ok
@@ -257,7 +324,7 @@ def _process_watch(watch, session, cache):
 
 
 def run_cycle(session, cache):
-    due = watches.due_watches(config.WATCH_INTERVAL_MIN, config.WATCH_BATCH)
+    due = watches.due_watches(watches.get_interval_min(), config.WATCH_BATCH)
     if not due:
         return 0
     log.info("cycle: %d watch(es) due", len(due))
@@ -265,7 +332,11 @@ def run_cycle(session, cache):
         if _STOP:
             break
         _process_watch(w, session, cache)
-        time.sleep(config.WATCH_PAUSE_SEC)
+        # Base polite pause + a little jitter so the stream isn't perfectly
+        # periodic (harder for cadence-based rate limiters to key on).
+        jitter = random.uniform(0, config.WATCH_PAUSE_JITTER_SEC) \
+            if config.WATCH_PAUSE_JITTER_SEC > 0 else 0.0
+        _interruptible_sleep(config.WATCH_PAUSE_SEC + jitter)
     return len(due)
 
 
@@ -275,8 +346,8 @@ def main():
 
     watches.init_db()
     log.info("worker up | interval=%dm tick=%ds batch=%d notify_on=%s provider=%s configured=%s",
-             config.WATCH_INTERVAL_MIN, config.WATCH_TICK_SEC, config.WATCH_BATCH,
-             config.WATCH_NOTIFY_ON, config.WHATSAPP_PROVIDER, whatsapp.is_configured())
+             watches.get_interval_min(), config.WATCH_TICK_SEC, config.WATCH_BATCH,
+             watches.get_notify_mode(), config.WHATSAPP_PROVIDER, whatsapp.is_configured())
     if not whatsapp.is_configured():
         log.warning("WhatsApp not fully configured — alerts will be logged/failed. "
                     "Set STOCKLY_WHATSAPP_* env vars.")

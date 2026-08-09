@@ -485,6 +485,19 @@
   }
   .user-chip .role.user { background: #64748b; }
 
+  .token-chip {
+    height: 36px; padding: 0 12px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface-2);
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 800; color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .token-chip svg { color: var(--accent, #0f766e); flex: none; }
+  .token-chip.low { border-color: #fde68a; background: var(--orange-bg); color: var(--orange); }
+  .token-chip.zero { border-color: #fecaca; background: var(--red-bg); color: var(--red); }
+  .token-bal.zero { color: var(--red); font-weight: 800; }
+  @media (max-width: 520px) { .token-chip .btn-label { display: none; } }
+
   .modal-backdrop {
     display: none; position: fixed; inset: 0; z-index: 80;
     background: rgba(15, 23, 42, .45); align-items: flex-start; justify-content: center;
@@ -572,6 +585,33 @@
   .watch-cities { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
   .watch-cities summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
   .watches-empty { padding: 20px 8px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* WhatsApp connection card — one clean status line + reconnect */
+  .wa-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 0 0 16px; background: var(--surface); }
+  .wa-card-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .wa-card-main .wa-status { font-size: 14px; }
+  .wa-card-actions { display: flex; align-items: center; gap: 14px; }
+  .wa-test-row, .wa-manage-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .wa-test-row input { height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; flex: 1; min-width: 160px; }
+  #waQrWrap { margin-top: 14px; text-align: center; }
+  #waQrImg { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 6px; }
+  .link-btn.danger { color: var(--red); }
+
+  /* Alert settings — tucked into a collapsible */
+  .watch-settings { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; }
+  .watch-settings > summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); list-style: none; }
+  .watch-settings > summary::-webkit-details-marker { display: none; }
+  .watch-settings > summary::before { content: '\2699  '; }
+  .settings-body { margin-top: 12px; }
+  .wa-select { height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; background: var(--surface); flex: 1; min-width: 200px; }
+  .wa-num { width: 72px; height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; background: var(--surface); }
+
+  /* Grouped watches — one summary row per product, expandable to locations */
+  .watches-table tr.wgroup { cursor: pointer; }
+  .watches-table tr.wgroup:hover, .watches-table tr.wgroup.open { background: var(--gray-bg); }
+  .wcaret { display: inline-block; width: 14px; color: var(--muted); font-size: 11px; transition: transform .12s; }
+  .watches-table tr.wdetail > td:first-child { padding-left: 22px; }
+  .wloc .switch { margin-right: 8px; vertical-align: middle; }
 </style>
 </head>
 <body class="locked">
@@ -673,6 +713,10 @@
     <div class="user-chip authed-only" id="userChip" style="display:none;">
       <span id="userChipName">—</span>
       <span class="role" id="userChipRole">user</span>
+    </div>
+    <div class="token-chip authed-only" id="tokenChip" style="display:none;" title="Search tokens remaining (in-stock costs 2, out-of-stock costs 1)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5a2.5 2.5 0 0 1 5 0c0 1.4-1 2-2.5 2.5S9 14.6 9 16"/></svg>
+      <span id="tokenChipVal">—</span>
     </div>
     <button class="icon-btn authed-only" id="usersBtn" style="display:none;" title="Manage users" aria-label="Manage users">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -778,12 +822,13 @@
               <th>User</th>
               <th>Platforms</th>
               <th>Location access</th>
+              <th>Tokens</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="usersTbody">
-            <tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>
+            <tr><td colspan="6" class="empty" style="padding:24px;">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -821,13 +866,59 @@
     <div class="modal-body">
       <div class="admin-msg" id="watchesMsg"></div>
 
-      <div class="wa-banner" id="waBanner">
-        <div class="wa-status" id="waStatus">Checking WhatsApp status…</div>
-        <div class="wa-actions">
+      <!-- WhatsApp connection: one clean status line + reconnect -->
+      <div class="wa-card" id="waCard">
+        <div class="wa-card-main">
+          <div class="wa-status" id="waStatus">Checking WhatsApp…</div>
+          <div class="wa-card-actions">
+            <button type="button" class="btn btn-primary" id="waReconnectBtn" style="display:none;">Reconnect WhatsApp</button>
+            <button type="button" class="link-btn" id="waTestToggle">Send test</button>
+            <button type="button" class="link-btn admin-only-wa" id="waManageToggle" style="display:none;">Manage</button>
+          </div>
+        </div>
+
+        <!-- Test send (hidden until "Send test") -->
+        <div class="wa-test-row" id="waTestRow" style="display:none;">
           <input type="text" id="waTestTo" placeholder="test number (optional)" autocomplete="off" />
-          <button type="button" class="btn" id="waTestBtn">Send test</button>
+          <button type="button" class="btn" id="waTestBtn">Send</button>
+        </div>
+
+        <!-- QR (shown only while (re)linking) -->
+        <div id="waQrWrap" style="display:none;">
+          <div class="hint" style="margin-bottom:8px;">On the sending phone: <strong>WhatsApp → Linked Devices → Link a Device</strong>, then scan:</div>
+          <img id="waQrImg" alt="WhatsApp pairing QR" width="220" height="220" />
+          <div class="hint" id="waQrHint" style="margin-top:8px;">Waiting for scan…</div>
+        </div>
+
+        <!-- Admin: manage the sending account (hidden until "Manage") -->
+        <div class="wa-manage-row admin-only-wa" id="waManageRow" style="display:none;">
+          <button type="button" class="link-btn" id="waRefreshBtn">Refresh status</button>
+          <button type="button" class="link-btn danger" id="waLogoutBtn">Log out / relink account</button>
         </div>
       </div>
+
+      <!-- Alert settings: tucked into a collapsible for admins -->
+      <details class="watch-settings admin-only-wa" id="alertSettings" style="display:none;">
+        <summary>Alert settings</summary>
+        <div class="settings-body">
+          <div class="field" style="margin:0;">
+            <label for="alertMode">When to notify</label>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <select id="alertMode" class="wa-select">
+                <option value="threshold">Price drops to my target</option>
+                <option value="price_drop">Price drops at all (vs last check)</option>
+                <option value="availability">Item comes back in stock</option>
+                <option value="change">Any status change</option>
+              </select>
+              <label for="alertInterval" style="margin:0; text-transform:none; letter-spacing:0; font-weight:600;">every</label>
+              <input type="number" id="alertInterval" min="1" step="1" value="60" class="wa-num" />
+              <span class="sub">min</span>
+              <button type="button" class="btn" id="alertModeSave">Save</button>
+            </div>
+            <div class="hint" id="alertModeHint">Applies to every watch. Set a per-product target with <code>@price</code> (e.g. <code>oppo k14 @14300</code>).</div>
+          </div>
+        </div>
+      </details>
 
       <div class="panel" style="box-shadow:none; margin:12px 0 16px;">
         <div class="panel-head"><h2>Add a watch</h2></div>
@@ -839,7 +930,7 @@
             </div>
             <div class="field" style="margin:0;">
               <label for="watchProducts">Product(s)</label>
-              <input type="text" id="watchProducts" placeholder="amul gold milk, iphone 17" autocomplete="off" />
+              <input type="text" id="watchProducts" placeholder="amul gold milk, oppo k14 6/128 @14300" autocomplete="off" />
             </div>
           </div>
           <div class="field" style="margin-top:12px;">
@@ -862,6 +953,12 @@
             <input type="text" id="watchNotifyTo" placeholder="defaults to configured number" autocomplete="off" />
           </div>
 
+          <div class="field" id="watchThresholdField" style="margin-top:12px; display:none;">
+            <label for="watchThreshold">Target price <span class="count">optional</span></label>
+            <input type="text" id="watchThreshold" placeholder="e.g. 14300 — alert when at/below this" autocomplete="off" inputmode="numeric" />
+            <div class="hint">Applies to products without an inline <code>@price</code>. Tip: you can also write <code>oppo k14 6/128 @14300</code>.</div>
+          </div>
+
           <button type="button" class="btn btn-primary" id="watchAddBtn" style="width:100%; margin-top:14px;">Add watch</button>
         </div>
       </div>
@@ -871,16 +968,15 @@
         <button type="button" class="link-btn" id="watchRefresh">Refresh</button>
       </div>
       <div class="table-scroll" style="max-height:none;">
-        <table class="users-table" id="watchesTable">
+        <table class="users-table watches-table" id="watchesTable">
           <thead>
             <tr>
               <th>Product</th>
-              <th>Location</th>
-              <th style="width:96px;">Platform</th>
-              <th style="width:120px;">Status</th>
+              <th style="width:110px;">Platform</th>
+              <th style="width:140px;">Status</th>
+              <th style="width:90px;">Target</th>
               <th style="width:120px;">Checked</th>
-              <th style="width:60px;">On</th>
-              <th style="width:56px;"></th>
+              <th style="width:70px;"></th>
             </tr>
           </thead>
           <tbody id="watchesTbody"></tbody>
@@ -1066,6 +1162,12 @@ let activeJobId = null;
 let jobCursor = 0;
 let jobTotal = 0;
 let pollTimer = null;
+// Guards against duplicate result rows: `polling` prevents two poll loops from
+// running at once (visibilitychange + focus + pageshow can all fire together on
+// phone unlock), and `seenSeqs` makes row ingestion idempotent so a row can
+// never be added twice even if the same batch is delivered more than once.
+let polling = false;
+let seenSeqs = new Set();
 const JOB_LS_KEY = 'stockly_active_job';
 
 // ── Distance ordering state (sort pincodes nearest-first) ───────────────────
@@ -1123,6 +1225,7 @@ function applyAuthUI() {
     const roleEl = $('userChipRole');
     roleEl.textContent = currentUser.role;
     roleEl.classList.toggle('user', currentUser.role !== 'admin');
+    updateBalance(currentUser.token_balance);
     // Hide main app until password is changed
     $('appShell').style.display = currentUser.must_change_password ? 'none' : '';
   } else {
@@ -1130,6 +1233,23 @@ function applyAuthUI() {
   }
   applyPlatformAccess();
   applyLocationAccess();
+}
+
+// Reflect the wallet balance in the header chip. `balance === null` means the
+// account is unlimited (admin). Keeps currentUser.token_balance in sync so the
+// value survives re-renders.
+function updateBalance(balance) {
+  const chip = $('tokenChip'), val = $('tokenChipVal');
+  if (!chip || !val || !currentUser) return;
+  if (currentUser.role === 'admin' || balance === null || balance === undefined) {
+    if (currentUser.role === 'admin') { val.textContent = '∞'; chip.classList.remove('low', 'zero'); }
+    return;
+  }
+  const n = Math.max(0, Number(balance) || 0);
+  currentUser.token_balance = n;
+  val.textContent = n.toLocaleString('en-IN');
+  chip.classList.toggle('zero', n <= 0);
+  chip.classList.toggle('low', n > 0 && n <= 10);
 }
 
 function applyLocationAccess() {
@@ -1290,6 +1410,7 @@ $('logoutBtn').addEventListener('click', async () => {
   currentUser = null;
   allowedPlatforms = [];
   rows = [];
+  seenSeqs.clear();
   applyAuthUI();
   setStatus('<span>Signed out.</span>');
 });
@@ -1492,12 +1613,12 @@ $('accessSave').addEventListener('click', async () => {
 
 async function loadAdminUsers() {
   const tb = $('usersTbody');
-  tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">Loading…</td></tr>`;
+  tb.innerHTML = `<tr><td colspan="6" class="empty" style="padding:24px;">Loading…</td></tr>`;
   try {
     const data = await apiJson('/api/admin/users');
     const users = data.users || [];
     if (!users.length) {
-      tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">No users yet.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="empty" style="padding:24px;">No users yet.</td></tr>`;
       return;
     }
     tb.innerHTML = users.map(u => {
@@ -1512,10 +1633,15 @@ async function loadAdminUsers() {
         ? `<div class="sub">All cities · Pincodes on</div>`
         : `<div class="uname" style="font-weight:600;">${escHtml(citySummaryText(u))}</div>
            <div class="sub">Pincodes ${pinsOn ? 'on' : 'off'} · <button type="button" class="link-btn" data-act="access" data-uid="${escHtml(u.id)}">Edit</button></div>`;
+      const tokenCell = u.role === 'admin'
+        ? `<span class="sub" title="Admins are never charged">∞</span>`
+        : `<span class="token-bal ${(u.token_balance || 0) <= 0 ? 'zero' : ''}">${(u.token_balance || 0).toLocaleString('en-IN')}</span>
+           <button type="button" class="link-btn" data-act="tokens" data-uid="${escHtml(u.id)}" style="margin-left:8px;">Add</button>`;
       return `<tr>
         <td><div class="uname">${escHtml(u.username)}</div><div class="sub">${escHtml(u.role)}</div></td>
         <td><div class="mini-toggles">${toggles}</div></td>
         <td>${locCell}</td>
+        <td style="white-space:nowrap;">${tokenCell}</td>
         <td>${active ? '<span class="badge b-available">Active</span>' : '<span class="badge b-error">Disabled</span>'}</td>
         <td style="white-space:nowrap;">
           ${u.role === 'admin' ? '' : `<button type="button" class="link-btn" data-act="toggle" data-uid="${escHtml(u.id)}" data-active="${active ? '0' : '1'}">${active ? 'Disable' : 'Enable'}</button>
@@ -1551,6 +1677,22 @@ async function loadAdminUsers() {
           if (user) openEditAccess(user);
           return;
         }
+        if (btn.dataset.act === 'tokens') {
+          const user = users.find(x => x.id === uid);
+          const cur = user ? (user.token_balance || 0) : 0;
+          const raw = prompt(`Add tokens for "${user ? user.username : ''}" (current: ${cur}).\nEnter a number (use a negative value to deduct):`, '100');
+          if (raw === null) return;
+          const amount = parseInt(raw, 10);
+          if (!Number.isFinite(amount) || amount === 0) { showAdminMsg('Enter a non-zero whole number.', false); return; }
+          try {
+            const res = await apiJson('/api/admin/users/' + uid + '/tokens', {
+              method: 'POST', body: JSON.stringify({ amount }),
+            });
+            showAdminMsg(`Updated — new balance: ${res.balance}.`, true);
+            await loadAdminUsers();
+          } catch (err) { showAdminMsg(err.message, false); }
+          return;
+        }
         try {
           if (btn.dataset.act === 'delete') {
             if (!confirm('Delete this account?')) return;
@@ -1568,7 +1710,7 @@ async function loadAdminUsers() {
       });
     });
   } catch (err) {
-    tb.innerHTML = `<tr><td colspan="5" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="empty" style="padding:24px;">${escHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -1869,7 +2011,23 @@ function finalizeResultsOrder() {
   if (cards) cards.scrollTop = 0;
 }
 
+function handleNotice(n) {
+  // Server-emitted, non-result events (currently only the wallet-empty signal).
+  if (n && n.kind === 'tokens_exhausted') {
+    updateBalance(n.balance != null ? n.balance : 0);
+  }
+}
+
 function addRow(r) {
+  // Idempotent: each server row carries a unique `seq`. If we've already shown
+  // it (e.g. two overlapping polls returned the same batch), skip it so the
+  // same pincode/location can't appear twice.
+  if (r && r.seq != null) {
+    if (seenSeqs.has(r.seq)) return;
+    seenSeqs.add(r.seq);
+  }
+  // Notices (e.g. tokens exhausted) aren't result rows — handle and skip.
+  if (r && r.type === 'notice') { handleNotice(r); return; }
   if (rows.length === 0) { $('tbody').innerHTML = ''; $('cards').innerHTML = ''; }
   rows.push(r);
   appendRowDom(r);
@@ -2040,7 +2198,9 @@ function finishRun(status, detail) {
   }
   const inStock = counts.available;
   const inStockPins = new Set(rows.filter(r => r.status === 'available').map(r => r.pincode)).size;
-  if (status === 'canceled') {
+  if (status === 'exhausted') {
+    setStatus(`<span style="color:var(--red)">⚠ Your tokens are used up — showing ${done} result${done === 1 ? '' : 's'}. <strong>Contact the admin for a recharge.</strong></span>`);
+  } else if (status === 'canceled') {
     setStatus(`<span>Stopped at ${done} / ${total || done}. <strong style="color:var(--green)">${inStock} in stock</strong> (shown first).</span>`);
   } else if (status === 'error') {
     setStatus(`<span>Stopped on error: ${escHtml(detail || 'unknown')} — showing ${done} result${done === 1 ? '' : 's'}.</span>`);
@@ -2052,35 +2212,42 @@ function finishRun(status, detail) {
 async function pollJob() {
   pollTimer = null;
   if (!activeJobId) return;
+  if (polling) return; // a poll is already in-flight — never run two at once
+  polling = true;
   const id = activeJobId;
-  let data;
   try {
-    data = await apiJson(`/api/check/poll?job_id=${encodeURIComponent(id)}&cursor=${jobCursor}`);
-  } catch (e) {
-    if (e.status === 401) { currentUser = null; applyAuthUI(); clearJobState(); setRunning(false); return; }
-    if (e.status === 404) {
-      // Job aged out of the server (or was never created) — stop cleanly.
-      finalizeResultsOrder();
-      clearJobState(); setRunning(false);
-      setStatus('<span>Search session expired — run it again.</span>');
+    let data;
+    try {
+      data = await apiJson(`/api/check/poll?job_id=${encodeURIComponent(id)}&cursor=${jobCursor}`);
+    } catch (e) {
+      if (e.status === 401) { currentUser = null; applyAuthUI(); clearJobState(); setRunning(false); return; }
+      if (e.status === 404) {
+        // Job aged out of the server (or was never created) — stop cleanly.
+        finalizeResultsOrder();
+        clearJobState(); setRunning(false);
+        setStatus('<span>Search session expired — run it again.</span>');
+        return;
+      }
+      // Transient (e.g. the tab was suspended and the network dropped) — retry.
+      if (activeJobId === id) pollTimer = setTimeout(pollJob, 1500);
       return;
     }
-    // Transient (e.g. the tab was suspended and the network dropped) — retry.
-    if (activeJobId === id) pollTimer = setTimeout(pollJob, 1500);
-    return;
-  }
-  if (activeJobId !== id) return; // a newer run started while we were awaiting
-  if (data.meta) renderMeta(data.meta);
-  for (const ev of (data.events || [])) addRow(ev);
-  if ((data.events || []).length) jobCursor = data.cursor;
-  const done = rows.length;
-  $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
-  if (data.status === 'running') {
-    setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
-    pollTimer = setTimeout(pollJob, 800);
-  } else {
-    finalizeResultsOrder();
-    finishRun(data.status, data.detail);
+    if (activeJobId !== id) return; // a newer run started while we were awaiting
+    if (data.meta) renderMeta(data.meta);
+    for (const ev of (data.events || [])) addRow(ev);
+    if ((data.events || []).length) jobCursor = data.cursor;
+    if (data.balance !== undefined) updateBalance(data.balance);
+    const done = rows.length;
+    $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
+    if (data.status === 'running') {
+      setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
+      pollTimer = setTimeout(pollJob, 800);
+    } else {
+      finalizeResultsOrder();
+      finishRun(data.status, data.detail);
+    }
+  } finally {
+    polling = false;
   }
 }
 
@@ -2090,6 +2257,7 @@ async function run() {
   const payload = buildPayload();
 
   rows = [];
+  seenSeqs.clear();
   resetCounts();
   jobCursor = 0;
   updateSortTools();
@@ -2104,12 +2272,21 @@ async function run() {
     activeJobId = data.job_id;
     jobCursor = 0;
     saveActiveJob(activeJobId);
+    if (data.balance !== undefined) updateBalance(data.balance);
     renderMeta(data.meta);
     pollJob();
   } catch (e) {
     if (e.status === 401) { currentUser = null; applyAuthUI(); }
     clearJobState();
     setRunning(false);
+    if (e.status === 402) {
+      // Wallet empty — the server blocked the run before it started.
+      updateBalance(0);
+      setStatus(`<span style="color:var(--red)">⚠ ${escHtml(e.message)}</span>`);
+      $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('Out of tokens', 'Contact the admin to recharge your account.')}</td></tr>`;
+      $('cards').innerHTML = emptyState('Out of tokens', 'Contact the admin to recharge your account.');
+      return;
+    }
     setStatus(`<span>Error: ${escHtml(e.message)}</span>`);
     $('tbody').innerHTML = `<tr><td colspan="7">${emptyState('No results', 'Try another city, pincode, or platform.')}</td></tr>`;
     $('cards').innerHTML = emptyState('No results', 'Try another city, pincode, or platform.');
@@ -2129,11 +2306,13 @@ async function resumeJobIfAny() {
   activeJobId = id;
   jobCursor = 0;
   rows = [];
+  seenSeqs.clear();
   resetCounts();
   renderMeta(data.meta);
   setRunning(data.status === 'running');
   for (const ev of (data.events || [])) addRow(ev);
   if ((data.events || []).length) jobCursor = data.cursor;
+  if (data.balance !== undefined) updateBalance(data.balance);
   if (data.status === 'running') {
     setStatus(`<span class="spin"></span><span>Resumed — ${rows.length} / ${jobTotal || '?'} checked</span>`);
     pollTimer = setTimeout(pollJob, 500);
@@ -2304,29 +2483,86 @@ function populateWatchPlatforms() {
 
 function renderWatchCityCount() { $('watchCityCount').textContent = watchCities.size + ' selected'; }
 
+function fmtTarget(v) {
+  return v != null ? '₹' + Number(v).toLocaleString('en-IN') : '—';
+}
+
+// Group watches by product + platform so the list stays short: one summary row
+// per product, expandable to the individual locations behind it.
 function renderWatches(list) {
   $('watchListCount').textContent = list.length;
   const tb = $('watchesTbody');
   if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="7"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6"><div class="watches-empty">No watches yet — add one above.</div></td></tr>`;
     return;
   }
-  tb.innerHTML = list.map(w => {
-    const status = w.last_status || '';
-    const badge = status
-      ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
-      : '<span class="sub">pending</span>';
-    const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
-    return `<tr data-id="${w.id}">
-      <td><span class="uname">${escHtml(w.product)}</span><div class="sub">${escHtml(w.pincode)}</div></td>
-      <td>${escHtml(w.place || w.pincode)}</td>
-      <td>${escHtml(PLAT_LABEL[w.platform] || w.platform)}</td>
-      <td>${badge}</td>
-      <td class="sub">${checked}</td>
-      <td><span class="switch"><input type="checkbox" data-act="toggle" ${w.active ? 'checked' : ''} /><span class="slider"></span></span></td>
-      <td><button type="button" class="link-btn" data-act="del">Delete</button></td>
+
+  const groups = new Map();
+  for (const w of list) {
+    const key = (w.platform || '') + '\u0000' + String(w.product || '').toLowerCase();
+    if (!groups.has(key)) groups.set(key, { product: w.product, platform: w.platform, items: [] });
+    groups.get(key).items.push(w);
+  }
+
+  let html = '';
+  let gi = 0;
+  for (const g of groups.values()) {
+    const items = g.items;
+    const total = items.length;
+    const inStock = items.filter(w => w.last_status === 'available').length;
+    const anyChecked = items.some(w => w.last_status);
+    const activeCount = items.filter(w => w.active).length;
+    const times = items.map(w => w.last_checked_at).filter(Boolean).sort();
+    const lastChecked = times.length ? fmtWhen(times[times.length - 1]) : '<span class="sub">never</span>';
+
+    let sumBadge;
+    if (!anyChecked) sumBadge = '<span class="sub">pending</span>';
+    else if (inStock > 0) sumBadge = `<span class="badge b-available">${inStock}/${total} in stock</span>`;
+    else sumBadge = `<span class="badge b-out_of_stock">0/${total} in stock</span>`;
+
+    const thr = [...new Set(items.map(w => w.price_threshold).filter(v => v != null))];
+    const targetTxt = thr.length === 1 ? fmtTarget(thr[0]) : (thr.length ? 'mixed' : '—');
+
+    const gid = 'g' + (gi++);
+    html += `<tr class="wgroup" data-gid="${gid}">
+      <td><span class="wcaret">▸</span> <span class="uname">${escHtml(g.product)}</span><div class="sub">${total} location${total === 1 ? '' : 's'} · ${activeCount} on</div></td>
+      <td>${escHtml(PLAT_LABEL[g.platform] || g.platform)}</td>
+      <td>${sumBadge}</td>
+      <td class="sub">${targetTxt}</td>
+      <td class="sub">${lastChecked}</td>
+      <td></td>
     </tr>`;
-  }).join('');
+
+    for (const w of items) {
+      const status = w.last_status || '';
+      const badge = status
+        ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
+        : '<span class="sub">pending</span>';
+      const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
+      html += `<tr class="wdetail wd-${gid}" data-id="${w.id}" style="display:none;">
+        <td class="wloc"><span class="switch"><input type="checkbox" data-act="toggle" ${w.active ? 'checked' : ''} /><span class="slider"></span></span>${escHtml(w.place || w.pincode)}<div class="sub">${escHtml(w.pincode)}</div></td>
+        <td></td>
+        <td>${badge}</td>
+        <td class="sub">${fmtTarget(w.price_threshold)}</td>
+        <td class="sub">${checked}</td>
+        <td><button type="button" class="link-btn danger" data-act="del">Delete</button></td>
+      </tr>`;
+    }
+  }
+  tb.innerHTML = html;
+
+  // Expand / collapse a product group.
+  tb.querySelectorAll('tr.wgroup').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act]')) return;
+      const gid = row.dataset.gid;
+      const open = row.classList.toggle('open');
+      const caret = row.querySelector('.wcaret');
+      if (caret) caret.textContent = open ? '▾' : '▸';
+      tb.querySelectorAll('.wd-' + gid).forEach(d => { d.style.display = open ? '' : 'none'; });
+    });
+  });
+
   tb.querySelectorAll('input[data-act="toggle"]').forEach(cb => {
     cb.addEventListener('change', async () => {
       const id = cb.closest('tr').dataset.id;
@@ -2343,21 +2579,147 @@ function renderWatches(list) {
   });
 }
 
+const MODE_LABEL = {
+  threshold: 'price ≤ target', price_drop: 'any price drop',
+  availability: 'back in stock', change: 'any change',
+};
+
+// Cached alert summary (mode + interval) used to enrich the connected status.
+let waModeLabel = '';
+let waInterval = null;
+// Reconnect state: when true we poll the bridge and reveal the QR as it arrives.
+let waReconnecting = false;
+let waQrTimer = null;
+
 async function loadWatches() {
   try {
     const data = await apiJson('/api/watches');
     const wa = data.whatsapp || {};
-    const st = $('waStatus');
-    st.classList.toggle('ok', !!wa.configured);
-    st.classList.toggle('bad', !wa.configured);
-    st.textContent = wa.configured
-      ? `WhatsApp ready · via ${wa.provider} · alerts on “${wa.notify_on}” · every ${data.interval_min} min`
-      : `WhatsApp not configured (provider: ${wa.provider}) — alerts won’t be delivered`;
+    const mode = wa.notify_on || 'price_drop';
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    waModeLabel = MODE_LABEL[mode] || mode;
+    waInterval = data.interval_min;
+
+    // Non-admins just get a simple ready/not-ready line (they can't manage the
+    // account); admins get the richer live status from loadAdminWaStatus().
+    if (!isAdmin) {
+      const st = $('waStatus');
+      st.classList.toggle('ok', !!wa.configured);
+      st.classList.toggle('bad', !wa.configured);
+      st.textContent = wa.configured
+        ? `WhatsApp alerts on · “${waModeLabel}” · every ${data.interval_min} min`
+        : 'WhatsApp not set up yet — alerts won’t be delivered';
+    }
+
+    // Show the per-product target field when the global mode is threshold.
+    $('watchThresholdField').style.display = (mode === 'threshold') ? '' : 'none';
     renderWatches(data.watches || []);
+
+    // Admin-only controls (settings + account management).
+    document.querySelectorAll('.admin-only-wa').forEach(el => {
+      if (el.id === 'waManageRow' || el.id === 'waTestRow') return; // toggled by their buttons
+      el.style.display = isAdmin ? '' : 'none';
+    });
+    if (isAdmin) {
+      $('alertMode').value = mode;
+      if (data.interval_min) $('alertInterval').value = data.interval_min;
+      loadAdminWaStatus();
+    }
   } catch (e) {
     if (e.status === 401) { currentUser = null; applyAuthUI(); closeWatches(); return; }
     showWatchesMsg(e.message, false);
   }
+}
+
+function showWaQr() {
+  $('waQrImg').src = '/api/admin/whatsapp/qr?t=' + Date.now();
+  $('waQrWrap').style.display = '';
+}
+function startQrPolling() {
+  if (waQrTimer) clearInterval(waQrTimer);
+  waQrTimer = setInterval(loadAdminWaStatus, 3000);
+}
+function stopQrPolling() {
+  if (waQrTimer) { clearInterval(waQrTimer); waQrTimer = null; }
+  waReconnecting = false;
+}
+
+// Drives the single status pill + Reconnect button + QR for admins.
+async function loadAdminWaStatus() {
+  const st = $('waStatus');
+  const reBtn = $('waReconnectBtn');
+  const suffix = waModeLabel ? ` · “${waModeLabel}” · every ${waInterval} min` : '';
+  const setBad = (txt) => { st.classList.remove('ok'); st.classList.add('bad'); st.textContent = txt; };
+  const setOk = (txt) => { st.classList.remove('bad'); st.classList.add('ok'); st.textContent = txt; };
+  try {
+    const s = await apiJson('/api/admin/whatsapp/status');
+    if (s.provider && s.provider !== 'webjs') {
+      setOk(`Alerts via “${s.provider}”${suffix}`);
+      reBtn.style.display = 'none';
+      $('waQrWrap').style.display = 'none';
+      stopQrPolling();
+      return;
+    }
+    if (s.ready) {
+      setOk(`WhatsApp connected${s.me ? ' · +' + s.me : ''}${suffix}`);
+      reBtn.style.display = 'none';
+      $('waQrWrap').style.display = 'none';
+      if (waReconnecting) { stopQrPolling(); showWatchesMsg('WhatsApp linked ✅', true); }
+    } else if (s.has_qr) {
+      setBad('WhatsApp not linked — tap “Reconnect” and scan the QR.');
+      reBtn.style.display = '';
+      if (waReconnecting) { showWaQr(); $('waQrHint').textContent = 'Waiting for you to scan…'; }
+    } else {
+      setBad('WhatsApp disconnected (' + (s.state || 'starting') + ') — tap “Reconnect”.');
+      reBtn.style.display = '';
+      if (waReconnecting) { $('waQrWrap').style.display = ''; $('waQrImg') && ($('waQrImg').removeAttribute('src')); $('waQrHint').textContent = 'Reconnecting… a QR will appear if a scan is needed.'; }
+      else $('waQrWrap').style.display = 'none';
+    }
+  } catch (e) {
+    setBad('WhatsApp bridge unreachable — ' + e.message);
+    reBtn.style.display = '';
+  }
+}
+
+async function waReconnect() {
+  clearWatchesMsg();
+  waReconnecting = true;
+  $('waQrWrap').style.display = '';
+  $('waQrHint').textContent = 'Connecting…';
+  startQrPolling();
+  await loadAdminWaStatus();
+}
+
+async function saveAlertMode() {
+  clearWatchesMsg();
+  const mode = $('alertMode').value;
+  const interval = parseInt($('alertInterval').value, 10);
+  const body = { notify_on: mode };
+  if (interval > 0) body.interval_min = interval;
+  const btn = $('alertModeSave'); btn.disabled = true;
+  try {
+    await apiJson('/api/admin/settings', { method: 'POST', body: JSON.stringify(body) });
+    showWatchesMsg('Saved: alerts on “' + (MODE_LABEL[mode] || mode) + '” · every ' + interval + ' min.', true);
+    await loadWatches();
+  } catch (e) { showWatchesMsg(e.message, false); }
+  finally { btn.disabled = false; }
+}
+
+async function waLogout() {
+  if (!confirm('Log out the current WhatsApp sending account? You will need to scan a new QR to relink.')) return;
+  const btn = $('waLogoutBtn'); btn.disabled = true;
+  clearWatchesMsg();
+  try {
+    await apiJson('/api/admin/whatsapp/logout', { method: 'POST', body: '{}' });
+    showWatchesMsg('Logged out — scan the new QR to relink.', true);
+    // Enter reconnect mode so the fresh QR is revealed automatically.
+    waReconnecting = true;
+    $('waQrWrap').style.display = '';
+    $('waQrHint').textContent = 'Generating a new QR…';
+    startQrPolling();
+    setTimeout(loadAdminWaStatus, 1500);
+  } catch (e) { showWatchesMsg(e.message, false); }
+  finally { btn.disabled = false; }
 }
 
 async function addWatch() {
@@ -2370,6 +2732,8 @@ async function addWatch() {
   };
   const notifyTo = $('watchNotifyTo').value.trim();
   if (notifyTo) payload.notify_to = notifyTo;
+  const threshold = ($('watchThreshold').value || '').replace(/[^\d.]/g, '').trim();
+  if (threshold) payload.price_threshold = threshold;
   if (!payload.products) { showWatchesMsg('Enter at least one product.', false); return; }
   if (!payload.pincodes && watchCities.size === 0) { showWatchesMsg('Enter a pincode or pick a city.', false); return; }
   const btn = $('watchAddBtn'); btn.disabled = true;
@@ -2377,7 +2741,7 @@ async function addWatch() {
     const data = await apiJson('/api/watches', { method: 'POST', body: JSON.stringify(payload) });
     const errs = (data.errors || []).length;
     showWatchesMsg(`Added ${data.created} watch${data.created === 1 ? '' : 'es'}.${errs ? ` ${errs} skipped.` : ''}`, true);
-    $('watchProducts').value = ''; $('watchPins').value = ''; $('watchNotifyTo').value = '';
+    $('watchProducts').value = ''; $('watchPins').value = ''; $('watchNotifyTo').value = ''; $('watchThreshold').value = '';
     watchCities.clear(); renderWatchCityCount();
     renderCityChecklist($('watchCityList'), watchCities, $('watchCitySearch').value);
     await loadWatches();
@@ -2411,6 +2775,7 @@ function openWatches() {
 function closeWatches() {
   $('watchesModal').classList.remove('open');
   if (watchesTimer) { clearInterval(watchesTimer); watchesTimer = null; }
+  stopQrPolling();
 }
 
 $('watchesBtn').addEventListener('click', openWatches);
@@ -2419,6 +2784,18 @@ $('watchesModal').addEventListener('click', (e) => { if (e.target === $('watches
 $('watchAddBtn').addEventListener('click', addWatch);
 $('watchRefresh').addEventListener('click', loadWatches);
 $('waTestBtn').addEventListener('click', testWhatsapp);
+$('alertModeSave').addEventListener('click', saveAlertMode);
+$('waRefreshBtn').addEventListener('click', loadAdminWaStatus);
+$('waLogoutBtn').addEventListener('click', waLogout);
+$('waReconnectBtn').addEventListener('click', waReconnect);
+$('waTestToggle').addEventListener('click', () => {
+  const r = $('waTestRow');
+  r.style.display = (r.style.display === 'none' || !r.style.display) ? 'flex' : 'none';
+});
+$('waManageToggle').addEventListener('click', () => {
+  const r = $('waManageRow');
+  r.style.display = (r.style.display === 'none' || !r.style.display) ? 'flex' : 'none';
+});
 $('watchCitySearch').addEventListener('input', (e) => renderCityChecklist($('watchCityList'), watchCities, e.target.value));
 $('watchCityClear').addEventListener('click', () => {
   watchCities.clear(); renderWatchCityCount();
@@ -2429,10 +2806,19 @@ $('watchCityList').addEventListener('change', renderWatchCityCount);
 $('runBtn').addEventListener('click', run);
 $('stopBtn').addEventListener('click', async () => {
   if (!activeJobId) return;
-  setStatus('<span class="spin"></span><span>Stopping…</span>');
-  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: activeJobId }) }); }
+  const id = activeJobId;
+  // Detach the client immediately so Stop feels instant. Previously we only
+  // showed "Stopping…" and waited for the server to flip to 'canceled', but the
+  // poll loop overwrote that message on its next tick and kept ingesting rows,
+  // and a single in-flight check (e.g. Instamart's WAF priming) could block the
+  // server-side cancel for tens of seconds — so Stop looked like it did nothing.
+  // Now we finalize what we have and stop polling right away; the server-side
+  // job winds down on its own once it sees the cancel flag (checked between
+  // checks), and any rows it produces afterwards are simply never polled.
+  finalizeResultsOrder();
+  finishRun('canceled');   // clears job state, stops polling, re-enables Run
+  try { await apiJson('/api/check/cancel', { method: 'POST', body: JSON.stringify({ job_id: id }) }); }
   catch (_) {}
-  // The poll loop will notice the 'canceled' status and finalize the results.
 });
 $('csvBtn').addEventListener('click', exportCSV);
 setLocMode('cities');

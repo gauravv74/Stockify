@@ -1,7 +1,8 @@
 {$STOCKLY_DOMAIN} {
 	encode gzip
 
-	# Long-lived NDJSON availability checks
+	# Serves the production app running in the EC2 container (stockly:5001).
+	# Migrated off the operator laptop reverse-tunnel (172.18.0.1:5055) on 20260808-212735.
 	reverse_proxy stockly:5001 {
 		flush_interval -1
 		transport http {

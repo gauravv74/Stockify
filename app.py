@@ -11,7 +11,7 @@ import re
 import time
 from datetime import timedelta
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from curl_cffi import requests as cffi_requests
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -77,6 +77,38 @@ def parse_products(raw):
         if p:
             out.append(p)
     return out
+
+
+def parse_products_with_thresholds(raw):
+    """Parse product entries, each optionally suffixed with ``@<price>`` to set a
+    per-product target price (e.g. ``"oppo k14 6/128 @14300"``).
+
+    Returns a list of ``(product, threshold_or_None)`` tuples.
+    """
+    out = []
+    for p in parse_products(raw):
+        m = re.search(r"@\s*([0-9][0-9,]*\.?[0-9]*)\s*$", p)
+        if m:
+            name = p[:m.start()].strip()
+            try:
+                thr = float(m.group(1).replace(",", ""))
+            except ValueError:
+                thr = None
+            if name:
+                out.append((name, thr))
+                continue
+        out.append((p, None))
+    return out
+
+
+def _bridge_headers():
+    return {"X-Auth-Token": config.WA_BRIDGE_TOKEN} if config.WA_BRIDGE_TOKEN else {}
+
+
+def _bridge_url():
+    """Bridge base URL. A runtime setting overrides the env default so the web
+    container can reach the wa-bridge service by name without a recreate."""
+    return (watches.get_setting("wa_bridge_url") or config.WA_BRIDGE_URL).rstrip("/")
 
 
 def parse_raw_pincodes(raw):
@@ -252,6 +284,33 @@ def admin_delete_user(user_id):
         code = 404 if err == "User not found." else 400
         return jsonify({"error": err}), code
     return jsonify({"ok": True})
+
+
+@app.route("/api/admin/users/<user_id>/tokens", methods=["POST"])
+@auth.admin_required
+def admin_grant_tokens(user_id):
+    """Add (or, with a negative amount, deduct) tokens for a user."""
+    payload = request.get_json(force=True, silent=True) or {}
+    me = auth.current_user()
+    new_balance, err = auth.grant_tokens(
+        user_id, payload.get("amount"),
+        actor=(me or {}).get("username"), note=payload.get("note"))
+    if err:
+        code = 404 if err == "User not found." else 400
+        return jsonify({"error": err}), code
+    return jsonify({"ok": True, "balance": new_balance})
+
+
+@app.route("/api/admin/tokens/ledger")
+@auth.admin_required
+def admin_token_ledger():
+    """Recent token movements (grants + spends), optionally for one user."""
+    try:
+        limit = int(request.args.get("limit", 200))
+    except (TypeError, ValueError):
+        limit = 200
+    user_id = (request.args.get("user_id") or "").strip() or None
+    return jsonify({"ledger": auth.list_ledger(user_id, limit)})
 
 
 @app.route("/api/admin/searches")
@@ -497,13 +556,18 @@ def _order_pincodes_by_distance(pincodes, cache, ref_lat, ref_lon):
 
 
 def _run_check_job(job_id, pincodes, products, platforms,
-                   ref_lat=None, ref_lon=None, order_by=None):
+                   ref_lat=None, ref_lon=None, order_by=None,
+                   user_id=None, is_admin=False):
     """Execute a search run in the background, persisting each result row.
 
     Runs in a daemon thread decoupled from any HTTP request, so the run keeps
     going even if the user backgrounds the tab, locks the phone, or reloads —
     the browser just re-polls ``/api/check/poll`` from its cursor. Cancellation
     is cooperative: we check the job's cancel flag between checks.
+
+    Non-admin users are charged tokens per *billable* result (in-stock /
+    out-of-stock) as each row resolves. When the wallet runs dry the run stops
+    and a ``tokens_exhausted`` notice is emitted so the UI can prompt a top-up.
 
     When ``order_by == 'distance'`` and a reference point is given, pincodes are
     processed nearest-first so the most relevant results stream in first.
@@ -515,6 +579,8 @@ def _run_check_job(job_id, pincodes, products, platforms,
             pincodes = _order_pincodes_by_distance(pincodes, cache, ref_lat, ref_lon)
         idx = 0
         canceled = False
+        exhausted = False
+        charge = bool(user_id) and not is_admin
         for pin in pincodes:
             if jobs.is_canceled(job_id):
                 canceled = True
@@ -536,6 +602,12 @@ def _run_check_job(job_id, pincodes, products, platforms,
                     canceled = True
                     break
                 for plat in platforms:
+                    # Cooperative cancel between platforms too, so Stop reacts
+                    # after the single in-flight check instead of finishing the
+                    # whole platform set for this product.
+                    if jobs.is_canceled(job_id):
+                        canceled = True
+                        break
                     idx += 1
                     row = _blank_row(idx, pin, place, lat, lon, q, plat)
                     try:
@@ -544,11 +616,35 @@ def _run_check_job(job_id, pincodes, products, platforms,
                         log.exception("check failed pin=%s plat=%s q=%s", pin, plat, q)
                         row["status"] = "error"
                         row["detail"] = str(e)[:200]
+
+                    # Charge for a real availability answer (in-stock/out-of-stock).
+                    # Do it before emitting so the row can carry the fresh balance.
+                    if charge:
+                        cost = config.TOKEN_COST.get(row.get("status"), 0)
+                        if cost:
+                            consumed, balance = auth.consume_tokens(
+                                user_id, cost, reason="search",
+                                meta=f"{plat}:{pin}:{q}:{row.get('status')}")
+                            row["token_cost"] = consumed
+                            row["balance"] = balance
+                            if consumed < cost or balance <= 0:
+                                exhausted = True
                     jobs.add_event(job_id, row)
-            if canceled:
+                    if exhausted:
+                        jobs.add_event(job_id, {
+                            "type": "notice", "kind": "tokens_exhausted",
+                            "balance": row.get("balance", 0),
+                        })
+                        break
+                if canceled or exhausted:
+                    break
+            if canceled or exhausted:
                 break
 
-        jobs.set_status(job_id, "canceled" if (canceled or jobs.is_canceled(job_id)) else "done")
+        if exhausted and not canceled:
+            jobs.set_status(job_id, "exhausted")
+        else:
+            jobs.set_status(job_id, "canceled" if (canceled or jobs.is_canceled(job_id)) else "done")
     except Exception as e:
         log.exception("search job %s crashed", job_id)
         jobs.set_status(job_id, "error", detail=str(e)[:200])
@@ -599,6 +695,17 @@ def check_start():
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
 
+    # Token gate: a non-admin with an empty wallet can't start a run.
+    is_admin = user.get("role") == "admin"
+    if not is_admin:
+        balance = auth.get_balance(user.get("id"))
+        if balance <= 0:
+            return jsonify({
+                "error": "Your tokens are used up. Please contact the admin for a recharge.",
+                "code": "tokens_exhausted",
+                "balance": 0,
+            }), 402
+
     total = len(pincodes) * len(products) * len(platforms)
 
     # Audit the request so admins can see what users searched.
@@ -623,11 +730,12 @@ def check_start():
     t = threading.Thread(
         target=_run_check_job,
         args=(job_id, pincodes, products, platforms),
-        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by},
+        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by,
+                "user_id": user.get("id"), "is_admin": is_admin},
         daemon=True)
     t.start()
 
-    return jsonify({"job_id": job_id, "meta": meta})
+    return jsonify({"job_id": job_id, "meta": meta, "balance": None if is_admin else auth.get_balance(user.get("id"))})
 
 
 @app.route("/api/check/poll")
@@ -655,6 +763,8 @@ def check_poll():
         "detail": job.get("detail"),
         "events": events,
         "cursor": next_cursor,
+        # Live wallet balance so the header updates as tokens are spent (null = admin/unlimited).
+        "balance": None if user.get("role") == "admin" else auth.get_balance(user.get("id")),
     })
 
 
@@ -752,11 +862,12 @@ def api_list_watches():
     uid = None if user.get("role") == "admin" else user["id"]
     return jsonify({
         "watches": watches.list_watches(user_id=uid),
-        "interval_min": config.WATCH_INTERVAL_MIN,
+        "interval_min": watches.get_interval_min(),
         "whatsapp": {
             "provider": config.WHATSAPP_PROVIDER,
             "configured": whatsapp.is_configured(),
-            "notify_on": config.WATCH_NOTIFY_ON,
+            "notify_on": watches.get_notify_mode(),
+            "modes": list(watches.NOTIFY_MODES),
         },
     })
 
@@ -784,22 +895,31 @@ def api_create_watches():
         payload["pincodes"] = []
 
     pincodes, _selected = resolve_pincodes(payload)
-    products = parse_products(payload.get("products", []))
+    product_specs = parse_products_with_thresholds(payload.get("products", []))
     platforms = resolve_platforms(payload.get("platform"), allowed)
     notify_to = (payload.get("notify_to") or "").strip() or None
+    # A single "target price" field applies to products that don't carry their
+    # own inline "@price"; inline thresholds always win.
+    try:
+        default_threshold = float(payload["price_threshold"]) if str(
+            payload.get("price_threshold", "")).strip() != "" else None
+    except (TypeError, ValueError):
+        default_threshold = None
 
     if not platforms:
         return jsonify({"error": "No platform access for the requested platform."}), 403
-    if not products:
+    if not product_specs:
         return jsonify({"error": "Enter at least one product."}), 400
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
 
     created, errors = [], []
     for pin in pincodes:
-        for q in products:
+        for q, thr in product_specs:
+            threshold = thr if thr is not None else default_threshold
             for plat in platforms:
-                w, err = watches.add_watch(user, plat, q, pin, notify_to=notify_to)
+                w, err = watches.add_watch(user, plat, q, pin, notify_to=notify_to,
+                                           price_threshold=threshold)
                 if w:
                     created.append(w)
                 elif err:
@@ -838,8 +958,88 @@ def api_test_whatsapp():
     to = (payload.get("to") or "").strip() or None
     ok, detail = whatsapp.send(
         "Stockly ✅ test alert — WhatsApp notifications are wired up.", to=to)
-    return jsonify({"ok": ok, "detail": detail, "provider": config.WHATSAPP_PROVIDER}), (
-        200 if ok else 502)
+    # Always 200 so the UI can surface the real reason (the frontend reads
+    # {ok, detail}); a 502 here just showed a bare "HTTP 502" to the user.
+    return jsonify({"ok": ok, "detail": detail, "provider": config.WHATSAPP_PROVIDER})
+
+
+# ---------------------------------------------------------------------------
+# Admin: global alert mode + WhatsApp Web (sending account) management.
+# ---------------------------------------------------------------------------
+@app.route("/api/admin/settings", methods=["GET"])
+@auth.admin_required
+def admin_get_settings():
+    return jsonify({
+        "notify_on": watches.get_notify_mode(),
+        "modes": list(watches.NOTIFY_MODES),
+        "interval_min": watches.get_interval_min(),
+    })
+
+
+@app.route("/api/admin/settings", methods=["POST"])
+@auth.admin_required
+def admin_set_settings():
+    payload = request.get_json(force=True, silent=True) or {}
+    mode = (payload.get("notify_on") or "").strip().lower()
+    if mode and mode not in watches.NOTIFY_MODES:
+        return jsonify({"error": f"Invalid mode. Use one of {list(watches.NOTIFY_MODES)}."}), 400
+    if mode:
+        watches.set_setting("notify_on", mode)
+    if str(payload.get("interval_min", "")).strip() != "":
+        try:
+            interval = max(1, int(payload["interval_min"]))
+        except (TypeError, ValueError):
+            return jsonify({"error": "interval_min must be a positive integer."}), 400
+        watches.set_setting("interval_min", interval)
+    return jsonify({"ok": True, "notify_on": watches.get_notify_mode(),
+                    "interval_min": watches.get_interval_min()})
+
+
+@app.route("/api/admin/whatsapp/status")
+@auth.admin_required
+def admin_whatsapp_status():
+    if config.WHATSAPP_PROVIDER != "webjs":
+        return jsonify({"ok": False, "provider": config.WHATSAPP_PROVIDER,
+                        "error": "WhatsApp Web bridge is only used when provider=webjs."}), 200
+    try:
+        r = cffi_requests.get(_bridge_url() + "/status",
+                              headers=_bridge_headers(), timeout=10)
+        data = r.json()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}",
+                        "bridge_url": config.WA_BRIDGE_URL}), 502
+    data["ok"] = True
+    data["provider"] = config.WHATSAPP_PROVIDER
+    return jsonify(data)
+
+
+@app.route("/api/admin/whatsapp/qr")
+@auth.admin_required
+def admin_whatsapp_qr():
+    try:
+        r = cffi_requests.get(_bridge_url() + "/qr",
+                              headers=_bridge_headers(), timeout=10)
+    except Exception as e:
+        return jsonify({"error": f"bridge unreachable: {e}"}), 502
+    if r.status_code == 204:
+        return ("", 204)
+    return Response(r.content, mimetype="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.route("/api/admin/whatsapp/logout", methods=["POST"])
+@auth.admin_required
+def admin_whatsapp_logout():
+    try:
+        r = cffi_requests.post(_bridge_url() + "/logout",
+                               headers=_bridge_headers(), timeout=20)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"ok": r.status_code == 200}
+        return jsonify(body), r.status_code
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 502
 
 
 if __name__ == "__main__":
