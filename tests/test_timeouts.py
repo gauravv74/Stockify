@@ -37,13 +37,48 @@ class TestQueueLimitExceedsScraperCeiling:
 
 
 class TestBlinkitInternalRetryFitsItsBudget:
-    def test_worst_case_backoff_fits_in_the_task_limit(self):
-        """blinkit_search sleeps 3s * attempt between tries. With the original
-        4 attempts that was 30s of sleeping inside a 20s task — unfinishable."""
+    def test_worst_case_counts_request_time_not_just_sleeping(self):
+        """The earlier version of this test only summed the backoff sleeps, so a
+        30s-per-request timeout hid behind a 9s "worst case" and the queue limit
+        was sized under the real figure. Each attempt can burn a whole request
+        timeout *and* a backoff."""
         bk = importlib.import_module("blinkit_check")
-        worst_case_backoff = sum(3 * attempt for attempt in range(1, bk.MAX_RETRIES + 1))
+        sleeping_only = sum(3 * attempt for attempt in range(1, bk.MAX_RETRIES + 1))
+        worst_case = config.http_scraper_worst_case_sec()
+        assert worst_case >= sleeping_only + bk.MAX_RETRIES * bk.REQUEST_TIMEOUT
+
+    def test_worst_case_fits_in_the_task_limit(self):
+        worst_case = config.http_scraper_worst_case_sec()
         budget = _limit_sec(config.QUEUE_HTTP)
-        assert worst_case_backoff < budget, (
-            f"Blinkit can sleep {worst_case_backoff}s inside a {budget}s task; "
-            "the task would be killed mid-backoff and redelivered."
+        assert worst_case < budget, (
+            f"Blinkit can run {worst_case}s inside a {budget}s task; the task "
+            "would be killed mid-flight and redelivered."
         )
+
+    def test_config_matches_the_scrapers_real_constants(self):
+        """The maths lives in config but the loop lives in blinkit_check; if they
+        drift the limit is sized against a scraper that no longer exists."""
+        bk = importlib.import_module("blinkit_check")
+        assert bk.MAX_RETRIES == config.HTTP_SCRAPER_MAX_RETRIES
+        assert bk.REQUEST_TIMEOUT == config.HTTP_REQUEST_TIMEOUT_SEC
+
+    def test_raising_the_request_timeout_pushes_the_queue_limit_out(self, monkeypatch):
+        """The exact failure that shipped: a per-request timeout equal to the
+        task limit, so whichever fired first was a coin toss."""
+        monkeypatch.setattr(config, "HTTP_REQUEST_TIMEOUT_SEC", 120.0)
+        assert _limit_sec(config.QUEUE_HTTP) > config.http_scraper_worst_case_sec()
+
+    def test_no_hardcoded_request_timeouts_in_the_http_scraper(self):
+        """Every curl call must read the shared value, or one site drifts back to
+        a timeout the queue maths knows nothing about."""
+        import pathlib
+        import re
+
+        source = pathlib.Path(bk_path()).read_text()
+        assert not re.findall(r"timeout=\d", source)
+
+
+def bk_path():
+    import blinkit_check
+
+    return blinkit_check.__file__

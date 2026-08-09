@@ -42,7 +42,9 @@ GEO_PAUSE = 1.1            # Nominatim asks for <=1 req/sec
 # a rate-limited check was killed mid-backoff and redelivered, adding yet another
 # request. The queue is now the outer retry layer (with jitter, and without
 # holding a worker thread), so this one stays short enough to fit the budget.
-MAX_RETRIES = int(os.environ.get("STOCKLY_BLINKIT_MAX_RETRIES", "2"))
+MAX_RETRIES = config.HTTP_SCRAPER_MAX_RETRIES
+# Shared with the queue's time-limit maths; see config.http_scraper_worst_case_sec.
+REQUEST_TIMEOUT = config.HTTP_REQUEST_TIMEOUT_SEC
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
@@ -82,7 +84,7 @@ def _nominatim(session, params):
         "https://nominatim.openstreetmap.org/search",
         params=params,
         headers={"user-agent": "blinkit-availability-checker/1.0"},
-        impersonate=IMPERSONATE, timeout=30,
+        impersonate=IMPERSONATE, timeout=REQUEST_TIMEOUT,
     )
     js = r.json()
     if js:
@@ -96,7 +98,7 @@ def _india_post_place(session, pin):
     free India Post API, which covers pincodes OSM lacks as postal nodes."""
     try:
         r = session.get(f"https://api.postalpincode.in/pincode/{pin}",
-                        impersonate=IMPERSONATE, timeout=30)
+                        impersonate=IMPERSONATE, timeout=REQUEST_TIMEOUT)
         js = r.json()
         if js and js[0].get("Status") == "Success" and js[0].get("PostOffice"):
             po = js[0]["PostOffice"][0]
@@ -175,7 +177,7 @@ def blinkit_search(session, query, lat, lon):
             r = session.post(
                 SEARCH_URL, params={"q": query},
                 headers=blinkit_headers(lat, lon),
-                impersonate=IMPERSONATE, timeout=30,
+                impersonate=IMPERSONATE, timeout=REQUEST_TIMEOUT,
                 proxies=config.curl_proxies(),
             )
         except Exception as e:

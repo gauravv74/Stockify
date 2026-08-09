@@ -224,6 +224,31 @@ BROWSER_CHECK_TIMEOUT_SEC = float(
 # Absolute ceiling for one task, whatever the platform.
 TASK_MAX_TIMEOUT_SEC = float(os.environ.get("STOCKLY_TASK_MAX_TIMEOUT_SEC", "60"))
 
+# Per-request ceiling for the direct-HTTP scrapers. A quick-commerce API either
+# answers in a second or is tarpitting us: when we are blocked the socket opens
+# and then stays silent, so a generous value buys nothing and just pins a worker
+# thread. Every curl call in the HTTP path must use this, otherwise the retry
+# loop below can outlast the queue's time limit.
+HTTP_REQUEST_TIMEOUT_SEC = float(
+    os.environ.get("STOCKLY_HTTP_REQUEST_TIMEOUT_SEC", "12"))
+# Attempts the HTTP scraper makes internally, before our own queue-level retry.
+HTTP_SCRAPER_MAX_RETRIES = int(os.environ.get("STOCKLY_BLINKIT_MAX_RETRIES", "2"))
+# Backoff it sleeps between those attempts: 3s, 6s, ... (see blinkit_search).
+HTTP_SCRAPER_BACKOFF_BASE_SEC = 3.0
+
+
+def http_scraper_worst_case_sec():
+    """Longest ``blinkit_search`` can run before returning on its own.
+
+    Each attempt can burn a full request timeout and is followed by a backoff,
+    so the queue limit has to clear the sum of both — counting only the sleeps
+    (the mistake this function exists to prevent) understates it several-fold.
+    """
+    attempts = max(HTTP_SCRAPER_MAX_RETRIES, 1)
+    requests_sec = attempts * HTTP_REQUEST_TIMEOUT_SEC
+    backoff_sec = HTTP_SCRAPER_BACKOFF_BASE_SEC * attempts * (attempts + 1) / 2
+    return requests_sec + backoff_sec
+
 # Retries apply only to *infrastructure* failures (timeout, reset, 5xx, 429,
 # WAF, browser crash) — never to legitimate business results.
 CHECK_MAX_RETRIES = int(os.environ.get("STOCKLY_CHECK_MAX_RETRIES", "2"))
@@ -243,7 +268,12 @@ LOG_LEVEL = os.environ.get("STOCKLY_LOG_LEVEL", "info").upper()
 def platform_timeout(platform):
     """Hard wall-clock budget for one check on ``platform``."""
     queue = PLATFORM_QUEUE.get(platform, QUEUE_BROWSER)
-    base = HTTP_CHECK_TIMEOUT_SEC if queue == QUEUE_HTTP else BROWSER_CHECK_TIMEOUT_SEC
+    if queue == QUEUE_HTTP:
+        # Nothing enforces a wall clock on the HTTP path; its real ceiling is
+        # however long the scraper's own retry loop can take.
+        base = max(HTTP_CHECK_TIMEOUT_SEC, http_scraper_worst_case_sec())
+    else:
+        base = BROWSER_CHECK_TIMEOUT_SEC
     return min(base, TASK_MAX_TIMEOUT_SEC)
 
 
@@ -261,7 +291,9 @@ def task_time_limit_ms(queue):
     normal error result that we can classify and retry on our own terms.
     """
     if queue == QUEUE_HTTP:
-        budget = HTTP_CHECK_TIMEOUT_SEC
+        # The HTTP scraper has no wall clock of its own — it just retries — so
+        # the floor here is its full retry loop, not the nominal check budget.
+        budget = max(HTTP_CHECK_TIMEOUT_SEC, http_scraper_worst_case_sec())
     elif queue == QUEUE_BROWSER:
         budget = BROWSER_CHECK_TIMEOUT_SEC
     else:
