@@ -3,5 +3,9 @@
 pytest>=8.0
 pytest-cov>=5.0
 
+# tests/test_compose.py reads docker-compose.yml to check every queue has a
+# consumer — a deploy-only mistake no amount of application testing catches.
+pyyaml>=6.0
+
 # Load testing (Phase 25). Run against a staging instance, never production.
 locust>=2.29
