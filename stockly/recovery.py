@@ -33,8 +33,14 @@ def _handle_signal(signum, _frame):
 
 
 def sweep(timeout_sec=None):
-    """Fail every job that has stopped making progress. Returns how many."""
-    timeout_sec = timeout_sec or config.JOB_STALE_TIMEOUT_SEC
+    """Fail every job that has stopped making progress. Returns how many.
+
+    ``timeout_sec=0`` means "settle everything currently active" — useful by
+    hand after an unclean worker shutdown. Hence the explicit None check: `or`
+    would treat that 0 as "not supplied" and quietly use the default instead.
+    """
+    if timeout_sec is None:
+        timeout_sec = config.JOB_STALE_TIMEOUT_SEC
     stale = jobs.stale_jobs(timeout_sec)
     for job in stale:
         completed = int(job.get("completed_checks") or 0)

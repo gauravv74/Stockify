@@ -74,6 +74,23 @@ class TestSweep:
         assert recovery.sweep(timeout_sec=300) == 1
         assert recovery.sweep(timeout_sec=300) == 0, "already terminal"
 
+    def test_zero_timeout_settles_everything_active(self, db, make_user):
+        """Regression: `timeout_sec or DEFAULT` treated an explicit 0 as
+        'not supplied', so the manual force-settle silently waited 180s."""
+        user = make_user()
+        job_id = jobs.create_job(user["id"], {}, 10)
+        jobs.mark_running(job_id)
+        jobs.heartbeat(job_id)  # fresh — would survive the default timeout
+
+        assert recovery.sweep(timeout_sec=0) == 1
+        assert jobs.get_job(job_id)["status"] in jobs.TERMINAL_STATUSES
+
+    def test_default_timeout_still_spares_fresh_jobs(self, db, make_user):
+        user = make_user()
+        job_id = jobs.create_job(user["id"], {}, 10)
+        jobs.heartbeat(job_id)
+        assert recovery.sweep() == 0
+
     def test_queued_job_never_picked_up_is_also_reaped(self, db, make_user):
         """If every worker was down at enqueue time nothing ever heartbeats."""
         user = make_user()

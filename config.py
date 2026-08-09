@@ -144,7 +144,12 @@ WATCH_PAUSE_JITTER_SEC = float(os.environ.get("STOCKLY_WATCH_PAUSE_JITTER_SEC", 
 # otherwise hang Playwright's promise forever, freezing the whole watch loop.
 # On timeout we cancel the operation and reset the browser so the next check
 # starts clean. Generous enough to cover a worst-case WAF re-prime.
-SCRAPER_CHECK_TIMEOUT_SEC = float(os.environ.get("STOCKLY_SCRAPER_CHECK_TIMEOUT_SEC", "120"))
+# Lowered from 120s now that checks run on a bounded pool of queue workers
+# rather than one sequential watcher process: there, a slow check only delayed
+# the next watch; here it holds a scarce worker hostage while other users wait.
+# The queue retries what this gives up on, so a re-prime still gets its chance —
+# just not while occupying a worker for two minutes.
+SCRAPER_CHECK_TIMEOUT_SEC = float(os.environ.get("STOCKLY_SCRAPER_CHECK_TIMEOUT_SEC", "45"))
 
 # ───────────────────────────────────────────────────────────────────────────
 # Execution model — queued checks (Redis + Dramatiq)
@@ -240,6 +245,32 @@ def platform_timeout(platform):
     queue = PLATFORM_QUEUE.get(platform, QUEUE_BROWSER)
     base = HTTP_CHECK_TIMEOUT_SEC if queue == QUEUE_HTTP else BROWSER_CHECK_TIMEOUT_SEC
     return min(base, TASK_MAX_TIMEOUT_SEC)
+
+
+# Grace added on top of a check's budget before the queue kills the task.
+_TASK_GRACE_SEC = 15
+
+
+def task_time_limit_ms(queue):
+    """Outer (queue) time limit for a task on ``queue``, in milliseconds.
+
+    Always strictly greater than any timeout the scraper enforces internally.
+    If the outer limit fires first the task is killed mid-flight and
+    redelivered — which sends *another* request to a retailer that is usually
+    already rate-limiting us. Letting the inner timeout win instead yields a
+    normal error result that we can classify and retry on our own terms.
+    """
+    if queue == QUEUE_HTTP:
+        budget = HTTP_CHECK_TIMEOUT_SEC
+    elif queue == QUEUE_BROWSER:
+        budget = BROWSER_CHECK_TIMEOUT_SEC
+    else:
+        budget = TASK_MAX_TIMEOUT_SEC
+    # Browser platforms police themselves with SCRAPER_CHECK_TIMEOUT_SEC; the
+    # queue must sit outside whichever of the two is larger.
+    if queue in (QUEUE_BROWSER, QUEUE_PROTECTED):
+        budget = max(budget, SCRAPER_CHECK_TIMEOUT_SEC)
+    return int((budget + _TASK_GRACE_SEC) * 1000)
 
 
 # ── Token / credit system (monetisation) ────────────────────────────────────

@@ -170,7 +170,7 @@ _RETRY_KW = dict(
 
 
 @dramatiq.actor(queue_name=config.QUEUE_HTTP,
-                time_limit=int(config.HTTP_CHECK_TIMEOUT_SEC * 1000) + 5000,
+                time_limit=config.task_time_limit_ms(config.QUEUE_HTTP),
                 **_RETRY_KW)
 def check_http(job_id, check_id, index, platform, product, pincode,
                user_id=None, charge=False):
@@ -178,7 +178,7 @@ def check_http(job_id, check_id, index, platform, product, pincode,
 
 
 @dramatiq.actor(queue_name=config.QUEUE_BROWSER,
-                time_limit=int(config.BROWSER_CHECK_TIMEOUT_SEC * 1000) + 10000,
+                time_limit=config.task_time_limit_ms(config.QUEUE_BROWSER),
                 **_RETRY_KW)
 def check_browser(job_id, check_id, index, platform, product, pincode,
                   user_id=None, charge=False):
@@ -186,7 +186,7 @@ def check_browser(job_id, check_id, index, platform, product, pincode,
 
 
 @dramatiq.actor(queue_name=config.QUEUE_PROTECTED,
-                time_limit=int(config.TASK_MAX_TIMEOUT_SEC * 1000) + 15000,
+                time_limit=config.task_time_limit_ms(config.QUEUE_PROTECTED),
                 **_RETRY_KW)
 def check_protected(job_id, check_id, index, platform, product, pincode,
                     user_id=None, charge=False):

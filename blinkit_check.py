@@ -37,7 +37,12 @@ GEO_CACHE = os.path.join(HERE, "pincode_geocache.json")
 IMPERSONATE = "chrome124"
 REQUEST_PAUSE = 0.6        # seconds between Blinkit calls (avoid 429)
 GEO_PAUSE = 1.1            # Nominatim asks for <=1 req/sec
-MAX_RETRIES = 4
+# In-request retries. Backoff is 3s * attempt, so 4 attempts is 30s of sleeping
+# inside a single check — longer than a queued task's whole budget, which meant
+# a rate-limited check was killed mid-backoff and redelivered, adding yet another
+# request. The queue is now the outer retry layer (with jitter, and without
+# holding a worker thread), so this one stays short enough to fit the budget.
+MAX_RETRIES = int(os.environ.get("STOCKLY_BLINKIT_MAX_RETRIES", "2"))
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
