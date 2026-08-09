@@ -1144,6 +1144,12 @@ let activeJobId = null;
 let jobCursor = 0;
 let jobTotal = 0;
 let pollTimer = null;
+// Guards against duplicate result rows: `polling` prevents two poll loops from
+// running at once (visibilitychange + focus + pageshow can all fire together on
+// phone unlock), and `seenSeqs` makes row ingestion idempotent so a row can
+// never be added twice even if the same batch is delivered more than once.
+let polling = false;
+let seenSeqs = new Set();
 const JOB_LS_KEY = 'stockly_active_job';
 
 // ── Distance ordering state (sort pincodes nearest-first) ───────────────────
@@ -1368,6 +1374,7 @@ $('logoutBtn').addEventListener('click', async () => {
   currentUser = null;
   allowedPlatforms = [];
   rows = [];
+  seenSeqs.clear();
   applyAuthUI();
   setStatus('<span>Signed out.</span>');
 });
@@ -1948,6 +1955,13 @@ function finalizeResultsOrder() {
 }
 
 function addRow(r) {
+  // Idempotent: each server row carries a unique `seq`. If we've already shown
+  // it (e.g. two overlapping polls returned the same batch), skip it so the
+  // same pincode/location can't appear twice.
+  if (r && r.seq != null) {
+    if (seenSeqs.has(r.seq)) return;
+    seenSeqs.add(r.seq);
+  }
   if (rows.length === 0) { $('tbody').innerHTML = ''; $('cards').innerHTML = ''; }
   rows.push(r);
   appendRowDom(r);
@@ -2130,35 +2144,41 @@ function finishRun(status, detail) {
 async function pollJob() {
   pollTimer = null;
   if (!activeJobId) return;
+  if (polling) return; // a poll is already in-flight — never run two at once
+  polling = true;
   const id = activeJobId;
-  let data;
   try {
-    data = await apiJson(`/api/check/poll?job_id=${encodeURIComponent(id)}&cursor=${jobCursor}`);
-  } catch (e) {
-    if (e.status === 401) { currentUser = null; applyAuthUI(); clearJobState(); setRunning(false); return; }
-    if (e.status === 404) {
-      // Job aged out of the server (or was never created) — stop cleanly.
-      finalizeResultsOrder();
-      clearJobState(); setRunning(false);
-      setStatus('<span>Search session expired — run it again.</span>');
+    let data;
+    try {
+      data = await apiJson(`/api/check/poll?job_id=${encodeURIComponent(id)}&cursor=${jobCursor}`);
+    } catch (e) {
+      if (e.status === 401) { currentUser = null; applyAuthUI(); clearJobState(); setRunning(false); return; }
+      if (e.status === 404) {
+        // Job aged out of the server (or was never created) — stop cleanly.
+        finalizeResultsOrder();
+        clearJobState(); setRunning(false);
+        setStatus('<span>Search session expired — run it again.</span>');
+        return;
+      }
+      // Transient (e.g. the tab was suspended and the network dropped) — retry.
+      if (activeJobId === id) pollTimer = setTimeout(pollJob, 1500);
       return;
     }
-    // Transient (e.g. the tab was suspended and the network dropped) — retry.
-    if (activeJobId === id) pollTimer = setTimeout(pollJob, 1500);
-    return;
-  }
-  if (activeJobId !== id) return; // a newer run started while we were awaiting
-  if (data.meta) renderMeta(data.meta);
-  for (const ev of (data.events || [])) addRow(ev);
-  if ((data.events || []).length) jobCursor = data.cursor;
-  const done = rows.length;
-  $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
-  if (data.status === 'running') {
-    setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
-    pollTimer = setTimeout(pollJob, 800);
-  } else {
-    finalizeResultsOrder();
-    finishRun(data.status, data.detail);
+    if (activeJobId !== id) return; // a newer run started while we were awaiting
+    if (data.meta) renderMeta(data.meta);
+    for (const ev of (data.events || [])) addRow(ev);
+    if ((data.events || []).length) jobCursor = data.cursor;
+    const done = rows.length;
+    $('bar').style.width = jobTotal ? (100 * Math.min(done, jobTotal) / jobTotal) + '%' : '0%';
+    if (data.status === 'running') {
+      setStatus(`<span class="spin"></span><span>${done} / ${jobTotal || '?'} checked</span>`);
+      pollTimer = setTimeout(pollJob, 800);
+    } else {
+      finalizeResultsOrder();
+      finishRun(data.status, data.detail);
+    }
+  } finally {
+    polling = false;
   }
 }
 
@@ -2168,6 +2188,7 @@ async function run() {
   const payload = buildPayload();
 
   rows = [];
+  seenSeqs.clear();
   resetCounts();
   jobCursor = 0;
   updateSortTools();
@@ -2207,6 +2228,7 @@ async function resumeJobIfAny() {
   activeJobId = id;
   jobCursor = 0;
   rows = [];
+  seenSeqs.clear();
   resetCounts();
   renderMeta(data.meta);
   setRunning(data.status === 'running');
