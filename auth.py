@@ -22,6 +22,9 @@ ALL_PLATFORMS = ("blinkit", "instamart", "zepto", "bigbasket", "flipkart", "jiom
 DEFAULT_ADMIN_USER = config.DEFAULT_ADMIN_USER
 DEFAULT_ADMIN_PASS = config.DEFAULT_ADMIN_PASS
 
+# One-time welcome bonus granted to a brand-new self-registered account.
+SIGNUP_BONUS_TOKENS = 100
+
 _lock = threading.Lock()
 _initialized = False
 
@@ -358,6 +361,32 @@ def create_user(username, password, platforms=None, role="user", cities=None,
         return _public_user(find_user_by_id(user_id)), None
     except sqlite3.IntegrityError:
         return None, "Username already exists."
+
+
+def register_user(username, password):
+    """Public self-service signup.
+
+    Creates a standard (non-admin) user with access to every platform and all
+    cities, then credits a one-time welcome bonus of free test tokens so they
+    can try the product immediately. The bonus is granted only here, at account
+    creation, so each new user receives it exactly once.
+    """
+    user, err = create_user(
+        username,
+        password,
+        platforms=_default_platforms(True),
+        role="user",
+        cities=None,          # empty list == unrestricted (all cities)
+        allow_pincodes=True,
+    )
+    if err:
+        return None, err
+    # One-time welcome bonus (recorded in the token ledger for auditability).
+    grant_tokens(
+        user["id"], SIGNUP_BONUS_TOKENS,
+        actor="signup", note="Welcome bonus — free test tokens",
+    )
+    return _public_user(find_user_by_id(user["id"])), None
 
 
 def update_user(user_id, *, platforms=None, active=None, password=None, role=None,

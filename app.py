@@ -193,6 +193,21 @@ def api_login():
     })
 
 
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    payload = request.get_json(force=True, silent=True) or {}
+    user, err = auth.register_user(payload.get("username"), payload.get("password"))
+    if err:
+        return jsonify({"error": err}), 400
+    auth.login_user(user)
+    return jsonify({
+        "user": user,
+        "platforms": auth.allowed_platforms(user),
+        "must_change_password": False,
+        "welcome_bonus": auth.SIGNUP_BONUS_TOKENS,
+    })
+
+
 @app.route("/api/logout", methods=["POST"])
 def api_logout():
     auth.logout_user()

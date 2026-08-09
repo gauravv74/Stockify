@@ -455,24 +455,113 @@
   body.locked #appShell { display: none; }
   body.locked .topbar-actions .authed-only { display: none; }
   #loginScreen {
-    display: none; min-height: calc(100vh - var(--header-h));
+    display: none; min-height: 100vh;
     align-items: center; justify-content: center; padding: 24px 16px;
+    background:
+      radial-gradient(1100px 520px at 12% -10%, rgba(15,118,110,.14), transparent 60%),
+      radial-gradient(900px 480px at 110% 115%, rgba(37,99,235,.12), transparent 55%),
+      var(--bg);
   }
   body.locked #loginScreen { display: flex; }
-  .login-card {
-    width: 100%; max-width: 400px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 16px;
-    box-shadow: var(--shadow-md); padding: 28px 24px;
+  body.locked .topbar { display: none; }
+
+  .auth-shell {
+    width: 100%; max-width: 940px; display: grid; grid-template-columns: 1fr 1fr;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 22px; overflow: hidden;
+    box-shadow: 0 24px 60px -24px rgba(15, 23, 42, .35), 0 2px 8px rgba(15,23,42,.05);
+    animation: authRise .5s cubic-bezier(.2,.7,.2,1) both;
   }
-  .login-card h2 { margin: 0 0 4px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; color: var(--ink); }
-  .login-card .sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
-  .login-card .field { margin-bottom: 12px; }
+  @keyframes authRise { from { opacity: 0; transform: translateY(14px) scale(.99); } to { opacity: 1; transform: none; } }
+
+  /* Left hero panel */
+  .auth-hero {
+    position: relative; padding: 40px 36px; color: #e6fbf7;
+    background:
+      radial-gradient(700px 320px at 120% -20%, rgba(45,212,191,.35), transparent 60%),
+      linear-gradient(160deg, #0f766e 0%, #0f172a 100%);
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .auth-hero-mark {
+    width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22);
+    color: #fff; backdrop-filter: blur(6px);
+  }
+  .auth-hero-mark svg { width: 28px; height: 28px; }
+  .auth-hero h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.04em; color: #fff; }
+  .auth-hero-tag { margin: -6px 0 4px; font-size: 15px; line-height: 1.55; color: rgba(230,251,247,.85); max-width: 30ch; }
+  .auth-hero-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  .auth-hero-list li { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: rgba(230,251,247,.92); }
+  .auth-hero-list .dot { width: 8px; height: 8px; border-radius: 50%; background: #5eead4; box-shadow: 0 0 0 4px rgba(94,234,212,.18); flex-shrink: 0; }
+  .auth-hero-badge {
+    margin-top: auto; font-size: 13px; font-weight: 600; color: #ecfeff;
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+    padding: 12px 14px; border-radius: 12px; line-height: 1.5;
+  }
+  .auth-hero-badge strong { color: #99f6e4; }
+
+  /* Right form panel */
+  .auth-panel { padding: 34px 34px 30px; display: flex; flex-direction: column; }
+
+  .auth-tabs {
+    position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 4px; margin-bottom: 22px;
+  }
+  .auth-tab {
+    position: relative; z-index: 1; appearance: none; border: none; background: transparent;
+    font: inherit; font-size: 14px; font-weight: 700; color: var(--muted);
+    height: 38px; border-radius: 9px; cursor: pointer; transition: color .18s;
+  }
+  .auth-tab.active { color: var(--ink); }
+  .auth-tab-glider {
+    position: absolute; z-index: 0; top: 4px; left: 4px; height: 38px;
+    width: calc(50% - 6px); border-radius: 9px; background: var(--surface);
+    box-shadow: var(--shadow); transition: transform .24s cubic-bezier(.2,.7,.2,1);
+  }
+  .auth-tabs.reg .auth-tab-glider { transform: translateX(calc(100% + 4px)); }
+
+  .auth-form { display: none; animation: authFade .28s ease both; }
+  .auth-form.active { display: block; }
+  @keyframes authFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .auth-form h2 { margin: 0 0 4px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; color: var(--ink); }
+  .auth-form .sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .auth-form .sub strong { color: var(--accent); }
+  .auth-form .field { margin-bottom: 14px; }
+  .auth-submit { width: 100%; margin-top: 6px; }
+  .auth-submit:not(:disabled) { box-shadow: 0 8px 20px -8px rgba(15,23,42,.5); }
+
+  .input-wrap { position: relative; display: flex; align-items: center; }
+  .input-wrap input { width: 100%; padding-right: 60px; }
+  .pw-toggle {
+    position: absolute; right: 8px; height: 26px; padding: 0 8px; border: none;
+    background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+    font-weight: 700; cursor: pointer; border-radius: 6px;
+  }
+  .pw-toggle:hover { color: var(--accent); background: var(--surface-2); }
+
+  .field-hint { display: block; margin-top: 5px; font-size: 11.5px; color: var(--muted); }
+  .pw-meter { height: 4px; border-radius: 999px; background: var(--border); margin-top: 8px; overflow: hidden; }
+  .pw-meter > span { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--red); transition: width .2s, background .2s; }
+  .pw-meter.ok > span { background: var(--orange); }
+  .pw-meter.good > span { background: var(--green); }
+
+  .auth-switch { margin: 16px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
+  .auth-switch .link-btn { font-size: 13px; font-weight: 700; }
+
   .login-error {
-    display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+    display: none; margin-bottom: 14px; padding: 10px 12px; border-radius: 8px;
     background: var(--red-bg); color: var(--red); border: 1px solid #fecaca;
     font-size: 13px; font-weight: 600;
   }
   .login-error.show { display: block; }
+  .login-error.ok { background: var(--green-bg); color: var(--green); border-color: #a7f3d0; }
+
+  @media (max-width: 720px) {
+    .auth-shell { grid-template-columns: 1fr; max-width: 420px; }
+    .auth-hero { display: none; }
+    .auth-panel { padding: 28px 22px 24px; }
+  }
   .user-chip {
     height: 36px; padding: 0 10px; border-radius: var(--radius-sm);
     border: 1px solid var(--border); background: var(--surface-2);
@@ -616,21 +705,83 @@
 </head>
 <body class="locked">
 <div id="loginScreen">
-  <form class="login-card" id="loginForm" autocomplete="on">
-    <h2>Sign in to Stockly</h2>
-    <p class="sub">Admins manage accounts &amp; platform access. Shared users only see platforms they’re allowed.</p>
-    <div class="login-error" id="loginError"></div>
-    <div class="field">
-      <label for="loginUser">Username</label>
-      <input type="text" id="loginUser" name="username" autocomplete="username" required placeholder="admin" />
+  <div class="auth-shell">
+    <!-- Left: brand / value panel -->
+    <aside class="auth-hero">
+      <div class="auth-hero-mark">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M3 3h18v4H3V3zm2 6h14l-1.2 10.2a2 2 0 01-2 1.8H8.2a2 2 0 01-2-1.8L5 9zm4 3v5m6-5v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h1>Stockly</h1>
+      <p class="auth-hero-tag">Live stock &amp; price tracking across every quick‑commerce platform.</p>
+      <ul class="auth-hero-list">
+        <li><span class="dot"></span> Blinkit, Zepto, Instamart, BigBasket &amp; more</li>
+        <li><span class="dot"></span> City &amp; pincode‑level availability</li>
+        <li><span class="dot"></span> WhatsApp back‑in‑stock alerts</li>
+      </ul>
+      <div class="auth-hero-badge">🎁 New here? Get <strong>100 free test tokens</strong> on signup.</div>
+    </aside>
+
+    <!-- Right: forms -->
+    <div class="auth-panel">
+      <div class="auth-tabs" role="tablist" aria-label="Sign in or create account">
+        <button type="button" class="auth-tab active" id="tabSignin" role="tab" aria-selected="true">Sign in</button>
+        <button type="button" class="auth-tab" id="tabRegister" role="tab" aria-selected="false">Create account</button>
+        <span class="auth-tab-glider" id="authGlider"></span>
+      </div>
+
+      <!-- Sign in -->
+      <form class="auth-form active" id="loginForm" autocomplete="on">
+        <h2>Welcome back</h2>
+        <p class="sub">Sign in to track stock and prices in real time.</p>
+        <div class="login-error" id="loginError"></div>
+        <div class="field">
+          <label for="loginUser">Username</label>
+          <input type="text" id="loginUser" name="username" autocomplete="username" required placeholder="your username" />
+        </div>
+        <div class="field">
+          <label for="loginPass">Password</label>
+          <div class="input-wrap">
+            <input type="password" id="loginPass" name="password" autocomplete="current-password" required placeholder="••••••••" />
+            <button type="button" class="pw-toggle" data-target="loginPass" aria-label="Show password">Show</button>
+          </div>
+        </div>
+        <button class="btn btn-primary auth-submit" type="submit" id="loginBtn">Sign in</button>
+        <p class="auth-switch">New to Stockly? <button type="button" class="link-btn" id="gotoRegister">Create a free account</button></p>
+      </form>
+
+      <!-- Register -->
+      <form class="auth-form" id="registerForm" autocomplete="on">
+        <h2>Create your account</h2>
+        <p class="sub">Sign up in seconds — we’ll drop <strong>100 free test tokens</strong> in your wallet.</p>
+        <div class="login-error" id="registerError"></div>
+        <div class="field">
+          <label for="regUser">Username</label>
+          <input type="text" id="regUser" name="username" autocomplete="username" required placeholder="pick a username" minlength="3" />
+          <span class="field-hint">At least 3 characters.</span>
+        </div>
+        <div class="field">
+          <label for="regPass">Password</label>
+          <div class="input-wrap">
+            <input type="password" id="regPass" name="new-password" autocomplete="new-password" required placeholder="create a password" minlength="8" />
+            <button type="button" class="pw-toggle" data-target="regPass" aria-label="Show password">Show</button>
+          </div>
+          <div class="pw-meter" id="regPwMeter"><span></span></div>
+          <span class="field-hint">Use at least 8 characters.</span>
+        </div>
+        <div class="field">
+          <label for="regPass2">Confirm password</label>
+          <div class="input-wrap">
+            <input type="password" id="regPass2" name="confirm-password" autocomplete="new-password" required placeholder="re‑enter password" />
+            <button type="button" class="pw-toggle" data-target="regPass2" aria-label="Show password">Show</button>
+          </div>
+        </div>
+        <button class="btn btn-primary auth-submit" type="submit" id="registerBtn">Create account &amp; claim 100 tokens</button>
+        <p class="auth-switch">Already have an account? <button type="button" class="link-btn" id="gotoSignin">Sign in</button></p>
+      </form>
     </div>
-    <div class="field">
-      <label for="loginPass">Password</label>
-      <input type="password" id="loginPass" name="password" autocomplete="current-password" required placeholder="••••••••" />
-    </div>
-    <button class="btn btn-primary" type="submit" id="loginBtn" style="width:100%; margin-top:8px;">Sign in</button>
-    <div class="hint" style="margin-top:14px; text-align:center;">Default admin: <strong>admin</strong> / <strong>admin123</strong> — change immediately after first login.</div>
-  </form>
+  </div>
 </div>
 
 <div id="pwdModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pwdTitle">
@@ -1379,6 +1530,54 @@ $('pwdSave').addEventListener('click', async () => {
   }
 });
 
+// ── Auth tabs (Sign in / Create account) ──────────────────────────────
+function setAuthMode(mode) {
+  const reg = mode === 'register';
+  $('tabSignin').classList.toggle('active', !reg);
+  $('tabRegister').classList.toggle('active', reg);
+  $('tabSignin').setAttribute('aria-selected', String(!reg));
+  $('tabRegister').setAttribute('aria-selected', String(reg));
+  document.querySelector('.auth-tabs').classList.toggle('reg', reg);
+  $('loginForm').classList.toggle('active', !reg);
+  $('registerForm').classList.toggle('active', reg);
+  $('loginError').classList.remove('show');
+  $('registerError').classList.remove('show');
+  const focusEl = reg ? $('regUser') : $('loginUser');
+  setTimeout(() => focusEl && focusEl.focus(), 60);
+}
+$('tabSignin').addEventListener('click', () => setAuthMode('signin'));
+$('tabRegister').addEventListener('click', () => setAuthMode('register'));
+$('gotoRegister').addEventListener('click', () => setAuthMode('register'));
+$('gotoSignin').addEventListener('click', () => setAuthMode('signin'));
+
+// Password show/hide toggles
+document.querySelectorAll('.pw-toggle').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const input = $(btn.dataset.target);
+    if (!input) return;
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? 'Hide' : 'Show';
+    btn.setAttribute('aria-label', (show ? 'Hide' : 'Show') + ' password');
+  });
+});
+
+// Live password-strength meter on the register form
+$('regPass').addEventListener('input', () => {
+  const v = $('regPass').value;
+  const meter = $('regPwMeter');
+  let score = 0;
+  if (v.length >= 8) score++;
+  if (v.length >= 12) score++;
+  if (/[A-Z]/.test(v) && /[a-z]/.test(v)) score++;
+  if (/\d/.test(v)) score++;
+  if (/[^A-Za-z0-9]/.test(v)) score++;
+  const pct = Math.min(100, (score / 5) * 100);
+  meter.querySelector('span').style.width = v ? pct + '%' : '0';
+  meter.classList.toggle('ok', score >= 2 && score < 4);
+  meter.classList.toggle('good', score >= 4);
+});
+
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('loginError').classList.remove('show');
@@ -1402,6 +1601,47 @@ $('loginForm').addEventListener('submit', async (e) => {
     $('loginError').classList.add('show');
   } finally {
     $('loginBtn').disabled = false;
+  }
+});
+
+$('registerForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errBox = $('registerError');
+  errBox.classList.remove('show', 'ok');
+  const username = $('regUser').value.trim();
+  const pass = $('regPass').value;
+  const pass2 = $('regPass2').value;
+  if (username.length < 3) {
+    errBox.textContent = 'Username must be at least 3 characters.';
+    errBox.classList.add('show'); return;
+  }
+  if (pass.length < 8) {
+    errBox.textContent = 'Password must be at least 8 characters.';
+    errBox.classList.add('show'); return;
+  }
+  if (pass !== pass2) {
+    errBox.textContent = 'Passwords do not match.';
+    errBox.classList.add('show'); return;
+  }
+  $('registerBtn').disabled = true;
+  try {
+    const data = await apiJson('/api/register', {
+      method: 'POST',
+      body: JSON.stringify({ username, password: pass }),
+    });
+    currentUser = data.user;
+    allowedPlatforms = data.platforms || [];
+    $('regPass').value = '';
+    $('regPass2').value = '';
+    applyAuthUI();
+    await onLoggedIn();
+    const bonus = data.welcome_bonus || 100;
+    setStatus(`<span>Welcome to Stockly! ${bonus} free test tokens added to your wallet. 🎉</span>`);
+  } catch (err) {
+    errBox.textContent = err.message || 'Registration failed';
+    errBox.classList.add('show');
+  } finally {
+    $('registerBtn').disabled = false;
   }
 });
 
