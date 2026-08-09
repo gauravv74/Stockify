@@ -32,6 +32,7 @@ from curl_cffi import requests
 
 import blinkit_check as bk
 import config
+from stockly import offers
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
@@ -261,7 +262,8 @@ def _parse_products(prods):
         if isinstance(brand, dict):
             brand = brand.get("name") or ""
         avail = p.get("availability", {}) or {}
-        disc = (p.get("pricing", {}) or {}).get("discount", {}) or {}
+        pricing = p.get("pricing", {}) or {}
+        disc = pricing.get("discount", {}) or {}
         prim = disc.get("prim_price", {}) or {}
         in_stock = (avail.get("avail_status") == "001") and not avail.get("not_for_sale")
         out.append({
@@ -273,6 +275,8 @@ def _parse_products(prods):
             "inStock": in_stock,
             "eta": "",
             "product_id": p.get("id"),
+            # Usually an empty dict; populated only where a card offer exists.
+            "best_offer": offers.from_bigbasket(pricing),
         })
     return out
 
@@ -323,6 +327,7 @@ def match_row(query, result):
         "name": m.get("name"), "variant": m.get("variant"), "brand": m.get("brand"),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
         "eta": eta, "merchant_id": ",".join(map(str, result.get("sa", []))),
+        "best_offer": m.get("best_offer"),
     }
 
 

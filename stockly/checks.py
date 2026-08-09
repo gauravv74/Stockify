@@ -174,7 +174,10 @@ def blank_row(index, pincode, place, lat, lon, product, platform):
     """The result envelope the API and clients expect. Shape is frozen."""
     return {
         "type": "result", "index": index, "pincode": pincode, "platform": platform,
-        "location": place or "", "lat": lat, "lon": lon, "product": product,
+        "location": place or "", "location_full": "", "lat": lat, "lon": lon,
+        "product": product,
         "status": "", "available": "", "name": "", "variant": "", "brand": "",
         "price": "", "mrp": "", "inventory": "", "eta": "", "merchant_id": "",
+        # None means "no offer found", which is a real answer — see stockly/offers.py.
+        "best_offer": None,
     }

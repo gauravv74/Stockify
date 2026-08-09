@@ -391,6 +391,22 @@ def admin_list_searches():
     return jsonify({"searches": auth.list_searches(limit)})
 
 
+@app.route("/api/products/top")
+@auth.login_required
+def api_top_products():
+    """The signed-in user's most-searched products, for one-click re-running.
+
+    Scoped to the caller: a shopper's shortcuts should reflect their own work,
+    and it keeps one tenant's product interests out of another's UI.
+    """
+    user = auth.current_user()
+    try:
+        limit = int(request.args.get("limit", 4))
+    except (TypeError, ValueError):
+        limit = 4
+    return jsonify({"products": auth.top_products(user.get("id"), limit=limit)})
+
+
 @app.route("/api/cities")
 @auth.login_required
 def api_cities():

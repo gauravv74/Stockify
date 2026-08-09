@@ -733,6 +733,25 @@ body.nav-collapsed .app-main { margin-left: var(--sidebar-w-collapsed); }
 
 /* Product picker */
 .prod-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+/* One-click repeats of what this user actually searches for. */
+.prod-suggest { margin-top: var(--s-2); }
+.prod-suggest-lbl {
+  display: block; margin-bottom: var(--s-1);
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+}
+.prod-suggest-chips { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.prod-chip {
+  max-width: 100%; padding: 3px var(--s-2);
+  font-size: 11.5px; font-weight: 550; color: var(--text-2);
+  background: var(--n-50); border: 1px solid var(--line);
+  border-radius: var(--r-full); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.prod-chip:hover { background: var(--n-100); border-color: var(--n-300); color: var(--text); }
+.prod-chip:focus-visible { box-shadow: var(--ring); }
+body.running .prod-chip { opacity: .55; cursor: not-allowed; }
+
 .prod-picked {
   display: none; align-items: center; justify-content: space-between; gap: var(--s-2);
   margin-top: var(--s-2); padding: var(--s-2) var(--s-3);
@@ -891,6 +910,23 @@ body.running .toolbar { display: none; }
 .sort-group input { width: 110px; height: 30px; font-size: 12px; }
 #refLabel { font-size: 11.5px; color: var(--text-3); }
 
+/* Filters the rows already on screen — no re-run, so it reads as instant. */
+.instock-toggle {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  margin: 0; font-size: 12px; font-weight: 550; color: var(--text-2);
+  cursor: pointer; user-select: none;
+}
+/* Green rather than the primary ramp: this filters to in-stock, and the table
+   already uses green for that state. */
+.instock-toggle input:checked + .slider { background: var(--ok-600); }
+.instock-toggle:hover .slider { background: var(--n-400); }
+.instock-toggle:hover input:checked + .slider { background: var(--ok-700); }
+.instock-toggle .count {
+  padding: 1px 6px; font-size: 10.5px; font-weight: 650; color: var(--text-3);
+  background: var(--n-100); border-radius: var(--r-full);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Results table */
 .results { overflow: hidden; }
 .table-scroll { overflow: auto; max-height: calc(100vh - 300px); }
@@ -939,6 +975,18 @@ td.price { font-weight: 650; font-variant-numeric: tabular-nums; text-align: rig
 }
 .prod { font-weight: 550; color: var(--text); }
 
+/* "No offer found" is a result, so it stays quiet but legible rather than
+   looking like a cell that failed to load. */
+.offer-badge {
+  display: inline-block; padding: 1px 6px;
+  font-size: 11px; font-weight: 650; color: var(--ok-700);
+  background: var(--ok-50); border: 1px solid var(--ok-100);
+  border-radius: var(--r-xs);
+}
+.offer-none { font-size: 11.5px; color: var(--text-3); }
+td.offer .sub { margin-top: 2px; font-variant-numeric: tabular-nums; }
+.eta-sub { margin-top: 3px; }
+
 .dist {
   display: inline-block; margin-left: 6px; padding: 1px 6px;
   font-size: 10.5px; font-weight: 600; color: var(--text-3);
@@ -979,6 +1027,8 @@ body.show-platform .r-plat { display: block; }
   border-top: 1px solid var(--line-soft);
 }
 .r-meta strong { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.r-offer { margin-top: var(--s-2); font-size: 11.5px; }
 
 /* ── Tables (users, watches) ────────────────────────────────────────────── */
 .users-table { width: 100%; }
@@ -1250,9 +1300,29 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
   .topbar { padding: 0 var(--s-4); }
   .topbar-title p { display: none; }
 
-  /* Cards replace the table — a 7-column grid is unusable at this width. */
-  .table-scroll { display: none; }
+  /* Cards replace the results table — a 7-column grid is unusable at this
+     width. Scoped to .results: the watches and admin tables have no card
+     equivalent, so hiding theirs removes the feature entirely on a phone. */
+  .results .table-scroll { display: none; }
   .cards { display: block; max-height: none; }
+
+  /* Those remaining tables scroll sideways instead, with columns wide enough
+     to stay readable rather than crushed into the viewport. The watches table
+     needs more: its five fixed columns already claim 580px, so anything less
+     collapses the Product column it leaves flexible. */
+  .users-table { min-width: 560px; }
+  .watches-table { min-width: 760px; }
+  /* Same scroll shadows as the platform picker: an edge shadow appears only
+     while there is more to scroll to, so a table cut off mid-column doesn't
+     read as a table with missing columns. */
+  .table-scroll {
+    -webkit-overflow-scrolling: touch;
+    background:
+      linear-gradient(to right, var(--surface), transparent) left / 28px 100% no-repeat local,
+      linear-gradient(to left, var(--surface), transparent) right / 28px 100% no-repeat local,
+      linear-gradient(to right, rgba(15,23,42,.10), transparent) left / 10px 100% no-repeat scroll,
+      linear-gradient(to left, rgba(15,23,42,.10), transparent) right / 10px 100% no-repeat scroll;
+  }
 
   .create-grid { grid-template-columns: 1fr; }
   .plat-toggles { grid-template-columns: 1fr; }
@@ -1583,6 +1653,10 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                     <button type="button" class="link-btn" id="findProductsBtn">Find on platform</button>
                   </div>
                   <input type="text" id="products" value="iphone 17" placeholder="e.g. iphone 17, amul milk" autocomplete="off" />
+                  <div class="prod-suggest" id="prodSuggest" style="display:none;">
+                    <span class="prod-suggest-lbl">Your top searches</span>
+                    <div class="prod-suggest-chips" id="prodSuggestChips"></div>
+                  </div>
                   <span class="field-hint">Comma-separate to check several at once, or use <strong>Find on platform</strong> to lock an exact product.</span>
                   <div class="prod-picked" id="prodPicked">
                     <span id="prodPickedText"></span>
@@ -1667,6 +1741,13 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
 
             <div class="sort-row" id="sortRow" style="display:none;">
               <div class="sort-group">
+                <label class="instock-toggle">
+                  <span class="switch"><input type="checkbox" id="inStockOnly" /><span class="slider"></span></span>
+                  <span>Show only in stock</span>
+                  <span class="count" id="inStockCount">0</span>
+                </label>
+              </div>
+              <div class="sort-group">
                 <span class="sort-lbl">Order</span>
                 <select id="sortMode" aria-label="Sort order">
                   <option value="stock">In-stock first</option>
@@ -1692,7 +1773,7 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                       <th style="width:26%;">Product</th>
                       <th style="width:124px;">Status</th>
                       <th style="width:96px; text-align:right;">Price</th>
-                      <th style="width:104px;">ETA / Stock</th>
+                      <th style="width:150px;">Best Card Offer</th>
                     </tr>
                   </thead>
                   <tbody id="tbody">
@@ -2191,6 +2272,7 @@ async function onLoggedIn() {
     await loadCities();
     citiesLoaded = true;
   }
+  loadTopProducts();
   // Reattach to a search that may still be running from before a reload.
   resumeJobIfAny();
 }
@@ -2759,6 +2841,34 @@ function renderCities(filter = '') {
   });
 }
 
+// Most people check the same handful of products over and over, so their own
+// history is a better shortcut than any catalogue we could offer them.
+async function loadTopProducts() {
+  const wrap = $('prodSuggest');
+  try {
+    const data = await apiJson('/api/products/top?limit=4');
+    const items = data.products || [];
+    if (!items.length) { wrap.style.display = 'none'; return; }
+    $('prodSuggestChips').innerHTML = items.map(p =>
+      `<button type="button" class="prod-chip" data-product="${escHtml(p.product)}" ` +
+      `title="Searched ${p.count} time${p.count === 1 ? '' : 's'}">${escHtml(p.product)}</button>`
+    ).join('');
+    wrap.style.display = '';
+  } catch (_) {
+    // Suggestions are a convenience; never let them break the page.
+    wrap.style.display = 'none';
+  }
+}
+
+$('prodSuggestChips').addEventListener('click', (e) => {
+  const btn = e.target.closest('.prod-chip');
+  if (!btn || document.body.classList.contains('running')) return;
+  $('products').value = btn.dataset.product;
+  setPicked('');   // a suggestion replaces any exact SKU locked in earlier
+  $('products').dispatchEvent(new Event('input', { bubbles: true }));
+  $('products').focus();
+});
+
 async function loadCities() {
   try {
     const resp = await fetch('/api/cities', { credentials: 'same-origin' });
@@ -2786,6 +2896,7 @@ function resetCounts() { for (const k in counts) counts[k] = 0; updateStats(); }
 function updateStats() {
   $('s-total').textContent = counts.total;
   $('s-available').textContent = counts.available;
+  $('inStockCount').textContent = counts.available;
   $('s-oos').textContent = counts.out_of_stock;
   $('s-nf').textContent = counts.not_found;
   $('s-ns').textContent = counts.not_serviceable;
@@ -2902,15 +3013,44 @@ function priceHtml(r) {
   return rupees(price);
 }
 
+// Card offers come from the retailer or not at all — see stockly/offers.py. An
+// absent offer is a finding, not a blank: "No offer found" tells the shopper we
+// looked, where an empty cell reads as a bug.
+function offerHtml(r) {
+  const o = r.best_offer;
+  if (!o) return '<span class="offer-none">No offer found</span>';
+  // Paise only when the retailer quoted them: "₹675.20" is a price, "₹675.2"
+  // looks like a rounding bug.
+  const rupees = (v) => '₹' + Number(v).toLocaleString('en-IN', {
+    minimumFractionDigits: Number.isInteger(Number(v)) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+  // The issuer is only ever shown when the retailer named one; today none do.
+  const head = o.issuer || o.savings_text || 'Card offer';
+  const bits = [];
+  if (o.issuer && o.savings_text) bits.push(escHtml(o.savings_text));
+  if (o.final_price != null) bits.push('pay ' + rupees(o.final_price));
+  return `<span class="offer-badge">${escHtml(head)}</span>` +
+         (bits.length ? `<div class="sub">${bits.join(' · ')}</div>` : '');
+}
+
+// ETA lost its own column to the offer, but it is the whole point of quick
+// commerce, so it rides along under the status it qualifies.
+function etaSub(r) {
+  if (!r.eta || (r.status !== 'available' && r.status !== 'out_of_stock')) return '';
+  return `<div class="sub eta-sub">${escHtml(r.eta)}</div>`;
+}
+
 function rowHtml(r) {
   const price = priceHtml(r);
-  const etaStock = (r.status === 'available' || r.status === 'out_of_stock')
-    ? `${escHtml(r.eta || '—')}<div class="sub">inv ${escHtml(r.inventory ?? '—')}</div>`
-    : '<span class="sub">—</span>';
+  const offer = offerHtml(r);
   const prod = r.name
     ? `<span class="prod">${escHtml(r.name)}</span><div class="sub">${escHtml([r.brand, r.variant].filter(Boolean).join(' · '))}</div>`
     : `<span class="prod">${escHtml(r.product)}</span>`;
   const loc = cleanLoc(r.location);
+  // Every locality the pincode covers, so a label showing two of them can still
+  // answer "is my area in here?" on hover.
+  const locTitle = r.location_full ? ` title="${escHtml(r.location_full)}"` : '';
   const distStr = fmtDist(rowDistance(r));
   const distChip = distStr ? ` <span class="dist">${distStr}</span>` : '';
   const mapU = mapsUrl(r);
@@ -2923,17 +3063,17 @@ function rowHtml(r) {
   const tr = `
     <td class="col-platform">${pTag}</td>
     <td class="pin">${escHtml(r.pincode)}</td>
-    <td class="loc">${loc ? escHtml(loc) : '<span class="sub">—</span>'}${distChip}${mapChip}</td>
+    <td class="loc"><span${locTitle}>${loc ? escHtml(loc) : '<span class="sub">—</span>'}</span>${distChip}${mapChip}</td>
     <td>${prod}</td>
-    <td>${badge}</td>
+    <td>${badge}${etaSub(r)}</td>
     <td class="price">${price}</td>
-    <td>${etaStock}</td>`;
+    <td class="offer">${offer}</td>`;
   const card = `
     <div class="r-plat">${pTag}</div>
     <div class="r-top">
       <div>
         <div class="pin">${escHtml(r.pincode)}</div>
-        <div class="sub" style="margin-top:2px;">${loc ? escHtml(loc) : '—'}${distStr ? ' · ' + distStr : ''}${mapChip}</div>
+        <div class="sub" style="margin-top:2px;"${locTitle}>${loc ? escHtml(loc) : '—'}${distStr ? ' · ' + distStr : ''}${mapChip}</div>
       </div>
       ${badge}
     </div>
@@ -2941,8 +3081,8 @@ function rowHtml(r) {
     <div class="r-meta">
       <div>Price <strong>${r.price ? '₹' + Number(r.price).toLocaleString('en-IN') : '—'}</strong></div>
       <div>ETA <strong>${escHtml(r.eta || '—')}</strong></div>
-      <div>Stock <strong>${escHtml(r.inventory ?? '—')}</strong></div>
-    </div>`;
+    </div>
+    <div class="r-offer">${offer}</div>`;
   return { tr, card };
 }
 
@@ -3185,6 +3325,7 @@ function finishRun(status, detail) {
     error: 'Stopped on error',
   })[status] || 'Check complete');
   $('csvBtn').disabled = rows.length === 0;
+  loadTopProducts();   // this run is now part of the history the chips rank
   // A run that was stopped early shouldn't show a full bar; only a completed
   // one has actually reached 100%.
   const endPct = (status === 'done' || !total)
@@ -3395,15 +3536,27 @@ window.addEventListener('pageshow', catchUpNow);
 window.addEventListener('focus', catchUpNow);
 
 function exportCSV() {
-  const cols = ['platform','pincode','location','distance_km','product','status','available','name','variant','brand','price','mrp','inventory','eta','merchant_id','lat','lon'];
+  // The export stays a superset of the table: ETA and inventory lost their
+  // column but not their value to anyone analysing a run in a spreadsheet.
+  const cols = ['platform','pincode','location','location_full','distance_km','product','status','available','name','variant','brand','price','mrp','inventory','eta','offer_issuer','offer_savings','offer_final_price','merchant_id','lat','lon'];
   const esc = (v) => {
     v = v == null ? '' : String(v);
     return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   };
+  const cell = (r, c, d) => {
+    if (c === 'distance_km') return d == null ? '' : d.toFixed(1);
+    if (c === 'offer_issuer') return (r.best_offer || {}).issuer || '';
+    if (c === 'offer_savings') return (r.best_offer || {}).savings_text || '';
+    if (c === 'offer_final_price') {
+      const v = (r.best_offer || {}).final_price;
+      return v == null ? '' : v;
+    }
+    return r[c];
+  };
   const lines = [cols.join(',')];
   for (const r of sortRows(rows)) {
     const d = rowDistance(r);
-    lines.push(cols.map(c => c === 'distance_km' ? esc(d == null ? '' : d.toFixed(1)) : esc(r[c])).join(','));
+    lines.push(cols.map(c => esc(cell(r, c, d))).join(','));
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -3955,6 +4108,10 @@ function applyStatusFilter() {
     b.classList.toggle('selected', b.dataset.filter === statusFilter && on);
     b.classList.toggle('muted', on && b.dataset.filter !== statusFilter);
   });
+  // The toggle and the "In stock" chip are two doors onto one filter, so the
+  // toggle follows statusFilter rather than owning a second flag that could
+  // disagree with it.
+  $('inStockOnly').checked = statusFilter === 'available';
   const match = (r) => !on || r.status === statusFilter;
   const trs = $('tbody').querySelectorAll('tr');
   const cards = $('cards').querySelectorAll('.r-card');
@@ -3970,6 +4127,12 @@ document.querySelectorAll('#statusFilters .stat').forEach(btn => {
     statusFilter = (statusFilter === f || f === 'all') ? 'all' : f;
     applyStatusFilter();
   });
+});
+
+$('inStockOnly').addEventListener('change', (e) => {
+  // Filters what is already on screen; never re-runs the search.
+  statusFilter = e.target.checked ? 'available' : 'all';
+  applyStatusFilter();
 });
 
 // ── Guide ───────────────────────────────────────────────────────────────────

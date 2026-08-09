@@ -147,15 +147,23 @@ Every platform, whatever its internal shape, resolves to:
 {
   "type": "result", "index": 1, "seq": 42,
   "pincode": "560001", "platform": "blinkit",
-  "location": "Bengaluru...", "lat": 12.97, "lon": 77.59,
+  "location": "Viman Nagar, Vadgaon Sheri · Pune",
+  "location_full": "Viman Nagar, Vadgaon Sheri, Dukirkline · Pune · Maharashtra",
+  "lat": 12.97, "lon": 77.59,
   "product": "amul milk",
   "status": "available | out_of_stock | not_found | not_serviceable | geocode_failed | error | error_<code>",
   "available": "yes | no | \"\"",
   "name": "", "variant": "", "brand": "",
   "price": null, "mrp": null, "inventory": "", "eta": "", "merchant_id": "",
+  "best_offer": null,
   "detail": "only present on error"
 }
 ```
+
+`best_offer` is `null` — meaning "no offer found" — unless the retailer itself
+returned a payment offer, in which case it carries
+`{issuer, savings_text, savings, final_price, detail}`. See
+[payment offers](#payment-offers-and-what-we-refuse-to-infer) below.
 
 The `status` enum is the contract's most important element. Note it
 distinguishes four genuinely different negative outcomes — **out of stock**
@@ -163,6 +171,56 @@ distinguishes four genuinely different negative outcomes — **out of stock**
 **not serviceable** (platform does not deliver here) and **error** (we failed).
 Collapsing these into a boolean would destroy the product's value; a watch must
 never alert on "we couldn't check" (see [§7](#7-watches-and-alerting)).
+
+### Pincode labels
+
+`location` names the areas a pincode actually covers ("Viman Nagar, Vadgaon
+Sheri · Pune"), not the administrative boundary it sits in. The distinction
+matters because Nominatim, queried by postcode, resolves to a polygon: every
+pincode in Pune came back as "Pune City Subdistrict, Pune District,
+Maharashtra", so fifty rows of results were labelled identically. Requesting
+`addressdetails` does not help — a postcode match contains no suburb at all.
+
+India Post supplies the real areas, since a pincode *is* a postal unit.
+Coordinates still come from Nominatim; only the label changed.
+
+Labels are versioned by `geo.LABEL_VERSION`. A cached row below it keeps its
+coordinates (which never go stale and are rate-limited to re-fetch) and gets a
+fresh label from one cheap India Post call the next time a check needs it. That
+makes labelling changes self-healing, but lazily — **after deploying a
+labelling change, run `python -m stockly.relabel`** to refresh the whole cache
+at once rather than waiting for searches to trickle through it.
+
+Note that workers cache nothing across restarts but *do* pin the code they
+started with: a labelling change has no effect until the scraper workers are
+restarted, because `geo.resolve()` runs there, not in the API process.
+
+### Payment offers, and what we refuse to infer
+
+The results table shows a **Best Card Offer** per row. The rule behind it is
+that every field displayed came from the retailer, because a shopper acts on
+this number at a checkout page we do not control. Two temptations are therefore
+rejected outright, and `stockly/offers.py` exists to make the rejection
+structural rather than a matter of each scraper's discipline:
+
+- **A product discount is not a payment offer.** Every platform gives us MRP and
+  selling price, and the gap between them renders beautifully as "35% off" — but
+  that is the shelf price, not something a card unlocks. Swiggy compounds the
+  confusion by naming its selling price `offerPrice`.
+- **We do not name a bank the retailer did not name.** Inferring "HDFC" from a
+  ₹168 saving would invent the one detail the shopper would act on.
+
+What the platforms actually expose, established by inspecting live responses:
+
+| Platform | Payment-offer data |
+|---|---|
+| BigBasket | **Yes** — `pricing.bank_offers` carries `effective_price` and `savings_text`; populated on a minority of SKUs, and it names no issuer |
+| Croma | No — only a product `discountValue` and a generic "EMI Available" string |
+| Blinkit, Instamart, Zepto, Flipkart, JioMart, Apple | Nothing offer-related in the responses these scrapers receive |
+
+So most rows read "No offer found", which is a finding rather than a gap. Adding
+a platform means writing an extractor here and a test against a captured
+payload; returning `None` is always the correct answer when unsure.
 
 ### Per-platform technique
 

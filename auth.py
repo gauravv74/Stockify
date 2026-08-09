@@ -527,6 +527,49 @@ def log_search(user, platform, products, cities, pincode_count, total_checks):
         pass
 
 
+def top_products(user_id=None, limit=4, scan=300):
+    """The products this user searches most, newest activity breaking ties.
+
+    ``searches.products`` holds the raw comma-separated input, so counting has
+    to happen after splitting. We read a bounded window of recent rows rather
+    than the whole table: suggestions should reflect what someone is working on
+    now, and it keeps the query cheap enough to run on every page load.
+
+    Matching is case- and space-insensitive so "IPhone 17" and "iphone 17" are
+    one product, but the label shown is the most recent spelling the user typed.
+    """
+    scan = max(1, min(int(scan or 300), 2000))
+    limit = max(1, min(int(limit or 4), 20))
+    sql = "SELECT products FROM searches"
+    params = []
+    if user_id:
+        sql += " WHERE user_id = ?"
+        params.append(user_id)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(scan)
+
+    try:
+        with _conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+    except Exception:
+        return []
+
+    counts, labels, order = {}, {}, {}
+    for position, r in enumerate(rows):
+        for raw in str(r["products"] or "").split(","):
+            name = " ".join(raw.split())
+            if not name:
+                continue
+            key = name.lower()
+            counts[key] = counts.get(key, 0) + 1
+            if key not in labels:      # rows arrive newest-first
+                labels[key] = name
+                order[key] = position
+
+    ranked = sorted(counts, key=lambda k: (-counts[k], order[k]))
+    return [{"product": labels[k], "count": counts[k]} for k in ranked[:limit]]
+
+
 def list_searches(limit=200):
     limit = max(1, min(int(limit or 200), 1000))
     with _conn() as conn:

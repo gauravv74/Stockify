@@ -112,6 +112,7 @@ def _run_check(job_id, check_id, index, platform, product, pincode,
         row["lat"] = location["lat"]
         row["lon"] = location["lon"]
         row["location"] = location.get("place") or ""
+        row["location_full"] = location.get("place_full") or ""
 
         attempt = _attempt()
         can_retry = attempt < config.CHECK_MAX_RETRIES
