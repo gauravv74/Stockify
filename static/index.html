@@ -1999,7 +1999,7 @@ body.locked #loginScreen { display: block; }
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Your watches <span class="count" id="watchListCount">0</span></h2>
+            <h2><span id="watchPanelTitle">Your watches</span> <span class="count" id="watchListCount">0</span></h2>
             <button type="button" class="link-btn" id="watchRefresh">Refresh</button>
           </div>
           <div class="table-scroll" style="max-height:none;">
@@ -3854,10 +3854,14 @@ function renderWatches(list) {
     return;
   }
 
+  // Admins see everyone's watches, so group by owner too and surface who added
+  // each one. Regular users only ever get their own rows back from the API.
+  const isAdmin = currentUser && currentUser.role === 'admin';
   const groups = new Map();
   for (const w of list) {
-    const key = (w.platform || '') + '\u0000' + String(w.product || '').toLowerCase();
-    if (!groups.has(key)) groups.set(key, { product: w.product, platform: w.platform, items: [] });
+    const ownerKey = isAdmin ? String(w.username || w.user_id || '') : '';
+    const key = ownerKey + '\u0000' + (w.platform || '') + '\u0000' + String(w.product || '').toLowerCase();
+    if (!groups.has(key)) groups.set(key, { product: w.product, platform: w.platform, username: w.username, items: [] });
     groups.get(key).items.push(w);
   }
 
@@ -3881,13 +3885,15 @@ function renderWatches(list) {
     const targetTxt = thr.length === 1 ? fmtTarget(thr[0]) : (thr.length ? 'mixed' : '—');
 
     const gid = 'g' + (gi++);
+    const ownerLine = isAdmin ? ` · by ${escHtml(g.username || 'unknown')}` : '';
+    const groupIds = items.map(w => w.id).join(',');
     html += `<tr class="wgroup" data-gid="${gid}">
-      <td><span class="wcaret">▸</span> <span class="uname">${escHtml(g.product)}</span><div class="sub">${total} location${total === 1 ? '' : 's'} · ${activeCount} on</div></td>
+      <td><span class="wcaret">▸</span> <span class="uname">${escHtml(g.product)}</span><div class="sub">${total} location${total === 1 ? '' : 's'} · ${activeCount} on${ownerLine}</div></td>
       <td>${escHtml(PLAT_LABEL[g.platform] || g.platform)}</td>
       <td>${sumBadge}</td>
       <td class="sub">${targetTxt}</td>
       <td class="sub">${lastChecked}</td>
-      <td></td>
+      <td><button type="button" class="link-btn danger" data-act="delgroup" data-ids="${groupIds}">Delete</button></td>
     </tr>`;
 
     for (const w of items) {
@@ -3934,6 +3940,21 @@ function renderWatches(list) {
       catch (e) { showWatchesMsg(e.message, false); }
     });
   });
+
+  // Delete a whole watch (every location behind a product), not one pincode.
+  tb.querySelectorAll('button[data-act="delgroup"]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ids = (btn.dataset.ids || '').split(',').filter(Boolean);
+      if (!ids.length) return;
+      if (!confirm(`Delete this watch and all ${ids.length} location${ids.length === 1 ? '' : 's'} behind it?`)) return;
+      btn.disabled = true;
+      try {
+        await Promise.all(ids.map(id => apiJson('/api/watches/' + id, { method: 'DELETE' })));
+        await loadWatches();
+      } catch (err) { showWatchesMsg(err.message, false); btn.disabled = false; }
+    });
+  });
 }
 
 const MODE_LABEL = {
@@ -3970,6 +3991,8 @@ async function loadWatches() {
 
     // Show the per-product target field when the global mode is threshold.
     $('watchThresholdField').style.display = (mode === 'threshold') ? '' : 'none';
+    // Admins are shown every user's watches; make the heading say so.
+    $('watchPanelTitle').textContent = isAdmin ? 'All watches' : 'Your watches';
     renderWatches(data.watches || []);
 
     // Admin-only controls (settings + account management).

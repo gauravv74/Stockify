@@ -960,6 +960,15 @@ def api_create_watches():
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
 
+    # Token gate: a watch spends tokens every time the worker polls it, so a
+    # non-admin with an empty wallet can't arm one (it wouldn't run anyway).
+    if user.get("role") != "admin" and auth.get_balance(user.get("id")) <= 0:
+        return jsonify({
+            "error": "Your tokens are used up. Please contact the admin for a recharge.",
+            "code": "tokens_exhausted",
+            "balance": 0,
+        }), 402
+
     created, errors = [], []
     for pin in pincodes:
         for q, thr in product_specs:

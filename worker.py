@@ -29,6 +29,7 @@ import time
 
 from curl_cffi import requests as cffi_requests
 
+import auth
 import blinkit_check as bk
 import config
 import watches
@@ -215,11 +216,44 @@ def _should_notify(prev_status, prev_available, new_status, new_available,
     return notify, status_changed, first_seen
 
 
+def _owner_billing(watch):
+    """Resolve the watch owner's billing state.
+
+    Returns ``(user_id, is_admin, has_tokens)``:
+      * ``user_id``   — the owning account id (may be None for legacy watches).
+      * ``is_admin``  — admins are never charged and never gated.
+      * ``has_tokens``— whether a paid (non-admin) run may proceed right now.
+
+    Pre-monetisation watches carry no ``user_id``; those keep running for free
+    to stay backward compatible. A watch whose owner no longer exists (deleted
+    account) is treated as un-runnable so it can't burn scraping resources.
+    """
+    user_id = watch.get("user_id")
+    if not user_id:
+        return None, False, True  # legacy/ownerless watch — free, always runs
+    owner = auth.find_user_by_id(user_id)
+    if not owner:
+        return user_id, False, False  # owner deleted — do not run
+    if owner.get("role") == "admin":
+        return user_id, True, True    # admins are unlimited
+    return user_id, False, auth.get_balance(user_id) > 0
+
+
 def _process_watch(watch, session, cache):
     wid = watch["id"]
     platform = watch["platform"]
     q = watch["product"]
     pin = watch["pincode"]
+
+    # 0) token gate — a non-admin owner must have credit for the watch to work.
+    # No tokens (or a deleted owner) means we skip the check entirely: nothing
+    # is scraped and no state changes, so the watch simply resumes the moment
+    # an admin tops the wallet back up.
+    user_id, is_admin_owner, has_tokens = _owner_billing(watch)
+    if user_id and not is_admin_owner and not has_tokens:
+        log.info("watch %s (%s/%s @%s): skipped — owner out of tokens",
+                 wid, platform, q, pin)
+        return
 
     # 1) geocode (shared, process-safe cache; persisted per-watch)
     lat, lon, place = watch.get("lat"), watch.get("lon"), watch.get("place")
@@ -272,6 +306,19 @@ def _process_watch(watch, session, cache):
 
     watches.record_result(wid, status, available, row, changed, notified,
                           price=new_price)
+
+    # Charge the owner for a real availability answer (in-stock / out-of-stock),
+    # mirroring the search path's pricing. Admins and ownerless watches are free;
+    # not-listed / unserviceable / error results carry no cost.
+    if user_id and not is_admin_owner:
+        cost = config.TOKEN_COST.get(status, 0)
+        if cost:
+            consumed, balance = auth.consume_tokens(
+                user_id, cost, reason="watch",
+                meta=f"{platform}:{pin}:{q}:{status}")
+            log.info("watch %s: charged %d token(s), balance=%d",
+                     wid, consumed, balance)
+
     log.info("watch %s (%s/%s @%s): %s->%s changed=%s notified=%s",
              wid, platform, q, pin, prev_status, status, changed, notified)
 
@@ -297,6 +344,7 @@ def main():
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)
 
+    auth.init_db()   # ensure users/token tables exist for per-watch billing
     watches.init_db()
     geo.init_db()
     log.info("worker up | interval=%dm tick=%ds batch=%d notify_on=%s provider=%s configured=%s",
