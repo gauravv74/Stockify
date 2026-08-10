@@ -10,6 +10,11 @@ Flow per location:
   lat/lng --> /api/instamart/home/v2   (extract storeId; none => not serviceable)
           --> /api/instamart/search/mart/v2?query=&storeId=  (product cards)
 
+Only the first step needs the browser, and its answer is cached per location
+(stockly/stores.py), so a warm check is just the second step: a curl_cffi POST
+carrying the browser's cookies. That is why several checks can share one
+Chromium — see SwiggyInstamart.
+
 Exposes a thread-safe singleton `client` with .check(lat, lon, query).
 Matching reuses blinkit_check.best_match (accessory-aware).
 """
@@ -22,6 +27,13 @@ from playwright.async_api import async_playwright
 
 import blinkit_check as bk
 import config
+from stockly import stores
+
+
+async def _make_lock():
+    """An asyncio.Lock must be created on the loop that will await it."""
+    return asyncio.Lock()
+
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
@@ -165,13 +177,36 @@ def extract_items(j):
 
 
 class SwiggyInstamart:
-    """Persistent headless-browser client, serialized behind a lock."""
+    """Persistent headless-browser client.
+
+    The browser is a credential factory, not the thing that answers a check.
+    Only priming (solving the WAF challenge) and resolving a location to a
+    store need the page; the search itself is a plain curl_cffi POST carrying
+    the cookies the browser earned. So the page is guarded by an asyncio lock
+    while searches run concurrently under a semaphore, which is what lets one
+    Chromium serve several checks at once on a small box.
+
+    Two things make the hot path touch no browser at all: the store id for a
+    location is cached (stockly/stores.py), and the WAF cookies are snapshotted
+    whenever we prime. A stale snapshot is self-correcting — the search comes
+    back empty, which already triggers a re-prime and retry.
+    """
+
+    PLATFORM = "instamart"
 
     def __init__(self):
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
-        self._lock = threading.Lock()
+        # Bounds how many checks are in flight; replaces the mutex that used to
+        # make this platform strictly serial.
+        self._slots = threading.BoundedSemaphore(config.platform_slots(self.PLATFORM))
+        # Guards the shared page. Created on the loop it belongs to.
+        self._page_lock = asyncio.run_coroutine_threadsafe(
+            _make_lock(), self._loop).result()
+        self._cookies = {}
+        # Bumped on every re-prime so concurrent recoveries collapse into one.
+        self._prime_gen = 0
         self._pw = self._browser = self._ctx = self._page = None
 
     def _run(self, coro):
@@ -190,8 +225,14 @@ class SwiggyInstamart:
         return fut.result(timeout=timeout + 15)
 
     async def _ensure(self):
+        """Bring up a primed browser. Cheap and lock-free once warm."""
         if self._page is not None:
             return
+        async with self._page_lock:
+            if self._page is None:
+                await self._boot()
+
+    async def _boot(self):
         self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.launch(
             headless=True,
@@ -226,6 +267,26 @@ class SwiggyInstamart:
     PROBE_LAT, PROBE_LON = "19.0760", "72.8777"  # Mumbai
 
     async def _prime(self, verify=True):
+        """Refresh the WAF session, then snapshot the cookies it earned.
+
+        The snapshot is what makes concurrent searches possible: they read it
+        instead of reaching into the shared browser context for every check.
+        """
+        try:
+            return await self._prime_page(verify)
+        finally:
+            await self._snapshot_cookies()
+
+    async def _snapshot_cookies(self):
+        """Copy the Swiggy cookies out of the browser for curl_cffi to reuse."""
+        try:
+            jar = await self._ctx.cookies()
+        except Exception:
+            return
+        self._cookies = {c["name"]: c["value"] for c in jar
+                         if "swiggy" in (c.get("domain") or "")}
+
+    async def _prime_page(self, verify=True):
         # Solve WAF + set instamart session cookies (sid/tid/deviceId). Swiggy's
         # AWS WAF sometimes needs a few seconds (and occasionally a second pass)
         # before the API stops returning HTTP 202 with an empty body, so we
@@ -308,12 +369,12 @@ class SwiggyInstamart:
         same residential proxy, and present a mainstream Chrome JA3/JA4 so the
         request looks like an ordinary consumer's. Returns the same shape as the
         in-page SEARCH_JS ({status, items, [empty]}).
+
+        Touches no Playwright object, so any number of these can run at once.
         """
         # Cookies the browser earned during priming (aws-waf-token, sid, tid,
-        # deviceId, ...). Scope to Swiggy so we don't leak unrelated cookies.
-        ck_list = await self._ctx.cookies()
-        cookies = {c["name"]: c["value"] for c in ck_list
-                   if "swiggy" in (c.get("domain") or "")}
+        # deviceId, ...), snapshotted at prime time and scoped to Swiggy.
+        cookies = dict(self._cookies)
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
@@ -345,9 +406,13 @@ class SwiggyInstamart:
         # the client's single loop thread.
         return await asyncio.get_event_loop().run_in_executor(None, _do)
 
-    async def _query(self, lat, lon, query):
+    async def _query(self, lat, lon, query, known_store=None):
         await self._ensure()
-        store, definitive = await self._store_lookup(lat, lon)
+        if known_store:
+            store, definitive = known_store, True
+        else:
+            async with self._page_lock:
+                store, definitive = await self._store_lookup(lat, lon)
         if not store:
             if definitive:
                 return {"serviceable": False, "store": None, "items": []}
@@ -358,29 +423,64 @@ class SwiggyInstamart:
         res = await self._search_cffi(store, query)
         if self._search_bad(res):
             # Likely a stale session (WAF cookies expired) -> re-prime to refresh
-            # them, re-resolve the store (it can change after a fresh session),
-            # and retry once via curl_cffi before trusting the empty result.
-            await self._prime()
-            store2, _ = await self._store_lookup(lat, lon)
-            store = store2 or store
+            # them, re-resolve the store (it can change after a fresh session,
+            # and a cached one may simply be wrong), and retry once via
+            # curl_cffi before trusting the empty result.
+            gen = self._prime_gen
+            async with self._page_lock:
+                # Concurrent checks all fail together when a session expires.
+                # Without this they would queue up and re-prime one after
+                # another, turning one 15s recovery into N of them.
+                if gen == self._prime_gen:
+                    await self._prime()
+                    self._prime_gen += 1
+                store2, definitive2 = await self._store_lookup(lat, lon)
+            if store2:
+                store = store2
+            elif known_store:
+                # We searched a store we remembered rather than one we just
+                # resolved, and a fresh session cannot confirm it still serves
+                # this location. Its empty catalogue is not evidence of
+                # anything, so refuse to report it as "nothing stocked here".
+                if definitive2:
+                    return {"serviceable": False, "store": None, "items": []}
+                return {"serviceable": None, "store": None, "items": [],
+                        "error": "swiggy store could not be reconfirmed"}
             res = await self._search_cffi(store, query)
         return {"serviceable": True, "store": store, "items": res.get("items") or []}
 
     def check(self, lat, lon, query):
         """Return dict: {serviceable, store, items:[{name,brand,variant,inStock,mrp,price,eta}]}."""
-        with self._lock:
+        key = stores.key_for(lat, lon)
+        cached = stores.get(self.PLATFORM, key)
+        with self._slots:
             try:
-                return self._run_bounded(
-                    self._query(lat, lon, query), config.SCRAPER_CHECK_TIMEOUT_SEC)
+                res = self._run_bounded(
+                    self._query(lat, lon, query, known_store=cached),
+                    config.SCRAPER_CHECK_TIMEOUT_SEC)
             except Exception as e:
                 # Timeout or hard failure -> reset the browser so the next call
                 # re-initialises from a clean session (a wedged Chromium would
                 # otherwise make every subsequent check fail too).
                 try:
-                    self._run_bounded(self._reset(), 30)
+                    self._run_bounded(self._reset_locked(), 30)
                 except Exception:
                     pass
                 return {"serviceable": None, "store": None, "items": [], "error": str(e)}
+
+        store = res.get("store")
+        if store and store != cached:
+            stores.put(self.PLATFORM, key, store)
+        elif cached and not store:
+            # We searched a remembered store and got nowhere. It may have closed
+            # or never served this location; make the next check re-resolve
+            # rather than repeat the same failure until the entry expires.
+            stores.forget(self.PLATFORM, key)
+        return res
+
+    async def _reset_locked(self):
+        async with self._page_lock:
+            await self._reset()
 
 
 client = SwiggyInstamart()

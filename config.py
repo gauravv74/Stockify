@@ -190,19 +190,39 @@ def _conc(platform, default):
     return int(os.environ.get(f"STOCKLY_CONCURRENCY_{platform.upper()}", str(default)))
 
 
-# Per-platform ceiling on simultaneous checks. Deliberately conservative:
-# 50 concurrent *users* must not mean 50 concurrent browsers. Retailer rate
-# limits, not CPU, are the binding constraint for the protected platforms.
+# Per-platform ceiling on simultaneous checks, enforced *per worker process* by
+# a semaphore in the client. The fleet-wide ceiling is therefore this times the
+# number of worker processes serving the platform's queue, bounded in turn by
+# that worker's thread count — so changing these and the compose commands are
+# two halves of one decision.
+#
+# Deliberately conservative: 50 concurrent *users* must not mean 50 concurrent
+# browsers. Retailer rate limits, not CPU, are the binding constraint for the
+# protected platforms.
 PLATFORM_CONCURRENCY = {
     "blinkit": _conc("blinkit", 6),
-    "bigbasket": _conc("bigbasket", 4),
+    # 2 here x 2 worker-http processes = 4 concurrent BigBasket checks, up from
+    # the 1-per-process its old mutex allowed.
+    "bigbasket": _conc("bigbasket", 2),
     "zepto": _conc("zepto", 2),
     "flipkart": _conc("flipkart", 2),
     "jiomart": _conc("jiomart", 2),
-    "instamart": _conc("instamart", 2),
+    # Instamart's warm path is an HTTP call carrying the browser's cookies, not
+    # a browser action, so it parallelises without a second Chromium.
+    "instamart": _conc("instamart", 3),
     "croma": _conc("croma", 1),
     "apple": _conc("apple", 1),
 }
+
+
+def platform_slots(platform):
+    """Simultaneous checks this *process* may run for ``platform``."""
+    return max(1, PLATFORM_CONCURRENCY.get(platform, 1))
+
+# How long to trust "this store serves that location" (see stockly/stores.py).
+# A retailer's footprint changes on the timescale of new stores opening, not of
+# stock moving, so a day is conservative. Nothing about availability is cached.
+STORE_CACHE_TTL_SEC = int(os.environ.get("STOCKLY_STORE_CACHE_TTL_SEC", str(24 * 3600)))
 
 # Fairness: cap how many checks of a single job may be in flight at once, so a
 # 5,000-check search cannot monopolise the workers ahead of a 10-check one.

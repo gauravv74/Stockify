@@ -160,10 +160,11 @@ Every platform, whatever its internal shape, resolves to:
 }
 ```
 
-`best_offer` is `null` — meaning "no offer found" — unless the retailer itself
-returned a payment offer, in which case it carries
-`{issuer, savings_text, savings, final_price, detail}`. See
-[payment offers](#payment-offers-and-what-we-refuse-to-infer) below.
+`best_offer` is `null` — meaning "no offer found" — unless there is a saving to
+report, in which case it carries `{kind, issuer, savings_text, savings, percent,
+final_price, base_price, base_label, detail}`. `kind` separates a payment offer
+the retailer published from a selling price below MRP; see
+[offers](#offers-and-what-we-refuse-to-infer) below.
 
 The `status` enum is the contract's most important element. Note it
 distinguishes four genuinely different negative outcomes — **out of stock**
@@ -195,31 +196,75 @@ Note that workers cache nothing across restarts but *do* pin the code they
 started with: a labelling change has no effect until the scraper workers are
 restarted, because `geo.resolve()` runs there, not in the API process.
 
-### Payment offers, and what we refuse to infer
+### Serving areas, and what is not cached
 
-The results table shows a **Best Card Offer** per row. The rule behind it is
-that every field displayed came from the retailer, because a shopper acts on
-this number at a checkout page we do not control. Two temptations are therefore
-rejected outright, and `stockly/offers.py` exists to make the rejection
-structural rather than a matter of each scraper's discipline:
+Several retailers answer a check in two steps: resolve the location to one of
+their own stores, then search that store. The first step is the expensive one —
+for Instamart it is a browser round trip costing more than the search itself —
+and its answer is a fact about the retailer's footprint, not about stock. So
+`stockly/stores.py` remembers it for a day, keyed by rounded coordinates.
 
-- **A product discount is not a payment offer.** Every platform gives us MRP and
-  selling price, and the gap between them renders beautifully as "35% off" — but
-  that is the shelf price, not something a card unlocks. Swiggy compounds the
-  confusion by naming its selling price `offerPrice`.
-- **We do not name a bank the retailer did not name.** Inferring "HDFC" from a
-  ₹168 saving would invent the one detail the shopper would act on.
+Only the store identity is cached. Two locations served by the same store still
+run their own search, because stock is what the caller asked about and it moves
+by the minute. Nothing in that module can make a check report availability it
+did not observe.
 
-What the platforms actually expose, established by inspecting live responses:
+It is worth recording the idea this **replaced**, because it looks obviously
+right and is wrong. If many pincodes shared a serving area, a search could run
+once per area instead of once per pincode. Measured across ten Pune pincodes:
+BigBasket returned nine distinct serving areas and Instamart nine distinct
+stores. There is almost nothing to collapse, so no such deduplication exists —
+and results that happen to be identical across pincodes are a coincidence of
+that product, not a property to build on.
 
-| Platform | Payment-offer data |
-|---|---|
-| BigBasket | **Yes** — `pricing.bank_offers` carries `effective_price` and `savings_text`; populated on a minority of SKUs, and it names no issuer |
-| Croma | No — only a product `discountValue` and a generic "EMI Available" string |
-| Blinkit, Instamart, Zepto, Flipkart, JioMart, Apple | Nothing offer-related in the responses these scrapers receive |
+### Offers, and what we refuse to infer
 
-So most rows read "No offer found", which is a finding rather than a gap. Adding
-a platform means writing an extractor here and a test against a captured
+The results table shows a **Best Offer** per row. The rule behind it is that
+every field displayed came from the retailer, because a shopper acts on this
+number at a checkout page we do not control. `stockly/offers.py` exists to make
+that structural rather than a matter of each scraper's discipline, and an offer
+carries a `kind` so the UI can never present one claim as another:
+
+- `kind="card"` — a payment offer the retailer published: money off *for paying
+  a particular way*. Built only from a retailer's own offer object.
+- `kind="discount"` — MRP above selling price. A real, checkable saving that
+  needs no card, and never described as one.
+
+**We never name a bank the retailer did not name.** Inferring "HDFC" from a ₹168
+saving would invent the one detail a shopper would act on.
+
+The column originally showed card offers only, and the second kind was refused
+here on the grounds that a shelf discount is not a payment offer. It still
+isn't — but that left the column reading "No offer found" on **every row of
+every search**, because no retailer we scrape publishes card offers at all.
+Measured directly against live responses:
+
+| Platform | Card-offer data | Price below MRP |
+|---|---|---|
+| BigBasket | `pricing.bank_offers` exists but was **empty on every SKU sampled**, groceries and electronics alike; its product pages contain no offer language either | Never — `mrp == price` on every match |
+| Zepto | Only referral-coupon marketing ("get 25% off on your next order"), which is not a product offer | Often — 3 of 5 matches |
+| Instamart | None | Sometimes — 1 of 6 matches |
+| JioMart | Only CSS class names and CMS scaffolding mentioning offers | Not measured |
+| Blinkit | None | Never in the sample |
+| Flipkart | None | Not measured |
+| Croma | Unknown — the scraper is currently blocked outright | — |
+| Apple | None | — |
+
+So the honest column shows the saving that does exist, labelled as what it is,
+and lights up with a real card offer the moment a retailer exposes one. Two
+consequences follow:
+
+- The discount is derived **centrally**, in `checks._with_offer`, after price
+  and MRP are normalised onto the row. That is the only point where one
+  implementation covers all eight platforms — every scraper except BigBasket
+  omits `best_offer` entirely, so a per-scraper fix would have left seven
+  platforms blank. A card offer a scraper did find is never overwritten.
+- The **cell does not repeat the Price column**, which already shows the
+  struck-through MRP and the percentage. A discount contributes only the rupee
+  saving; a card offer also shows its final price, because that one genuinely
+  differs from the price in the row.
+
+Adding a platform means writing an extractor here and a test against a captured
 payload; returning `None` is always the correct answer when unsure.
 
 ### Per-platform technique
@@ -313,19 +358,42 @@ streaming design could not:
 
 ### Concurrency, precisely
 
-This is subtle and worth stating explicitly, because it bounds throughput:
+This is subtle and worth stating explicitly, because it bounds throughput.
 
-- Gunicorn runs **2 processes × 4 threads** (`gthread`).
-- Each scraper client is a **module-level singleton guarding `check()` with a
-  `threading.Lock`** — verified in all seven class-based modules.
-- Therefore **within one process, checks against a given platform serialise**.
-  Two processes → at most 2 concurrent Instamart checks, each with its own
-  Chromium instance.
+Every scraper client is a module-level singleton, and each one used to guard
+`check()` with a `threading.Lock`. That made checks against a platform
+serialise *within a process*, so the worker thread counts in
+`docker-compose.yml` bought nothing per-platform and `config.PLATFORM_CONCURRENCY`
+described a limit nothing enforced. Production bore this out: a 53-check
+Instamart job spent 62s of wall clock on 62s of work, a speedup of 1.0, and
+BigBasket's median check measured 9.6s against 2.4s uncontended — the
+difference was threads queueing on the mutex.
 
-The lock is not a bottleneck to remove — it is load-bearing. It protects a
-single shared browser context per platform and doubles as politeness rate
-limiting. Removing it would multiply Chromium memory and trip the very rate
-limiters the scrapers work so hard to dodge.
+The lock was described here as load-bearing. For two platforms it was not:
+
+- **BigBasket** builds its session inside `_query`, so the lock protected no
+  shared state at all; it was politeness rate limiting wearing a mutex's
+  clothes. It is now a `BoundedSemaphore` sized by `config.platform_slots`.
+- **Instamart** genuinely shares one page, but only priming and store lookup
+  touch it. The search is a `curl_cffi` POST carrying cookies snapshotted from
+  the browser, so it needs no page at all. The lock narrowed to an
+  `asyncio.Lock` around the page operations, and those are now rare because
+  store ids are cached (`stockly/stores.py`).
+
+Where a client still holds a mutex (Apple, Croma, Zepto, Flipkart, JioMart) it
+is doing the job the docstring claims: one shared browser context, one check at
+a time.
+
+Two consequences worth remembering:
+
+- A client semaphore bounds **one worker process**. The fleet-wide ceiling is
+  that value times the processes serving the queue, capped by the worker's
+  thread count — so `PLATFORM_CONCURRENCY` and the compose commands are two
+  halves of one decision.
+- `worker-protected` runs one process on purpose. Extra processes would each
+  mean another Chromium; extra *threads* are what let Instamart use its slots.
+  Apple and Croma still serialize, so a run heavy on those can occupy threads
+  Instamart would otherwise use.
 
 ---
 
@@ -349,6 +417,7 @@ erDiagram
         TEXT platforms_json
         TEXT cities_json "[] = all"
         INT  allow_pincodes
+        TEXT prefs_json "remembered UI state"
         INT  active
         INT  must_change_password
     }
@@ -384,6 +453,15 @@ erDiagram
 `watches` carries `UNIQUE(user_id, platform, product, pincode)`, making
 registration idempotent — re-adding an existing watch upserts instead of
 duplicating.
+
+`prefs_json` remembers UI state across logins — today just the last platform the
+user selected, so the Blinkit default applies only to someone who has never
+chosen. It is written straight from the browser, so `auth.save_prefs` treats it
+as untrusted: keys outside `PREF_KEYS` are discarded, writes merge rather than
+replace, and a platform the user cannot access is refused. That last rule
+matters because a revoked platform restored on every login would strand the user
+on a tab that fails its access check — while the *stored* choice is deliberately
+left intact, so it returns if access does.
 
 **Schema management is `CREATE TABLE IF NOT EXISTS` plus guarded
 `ALTER TABLE`** in each module's `init_db()`, invoked at import time from

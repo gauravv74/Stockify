@@ -23,7 +23,7 @@ import logging
 import time
 
 import blinkit_check as bk
-from stockly import obs
+from stockly import obs, offers
 
 log = logging.getLogger("stockly.checks")
 
@@ -167,6 +167,22 @@ def execute_platform_check(platform, product, pincode, lat=None, lon=None,
                "product": product, "status": status,
                "duration_ms": round(duration_ms, 1)},
     )
+    return _with_offer(row)
+
+
+def _with_offer(row):
+    """Fill in the shelf discount when the platform found no card offer.
+
+    Done here rather than in each scraper because MRP and price are already
+    normalised onto the row by this point, so one implementation covers all
+    eight platforms and stays consistent between them. A card offer a scraper
+    did find is never overwritten.
+    """
+    if not isinstance(row, dict) or row.get("best_offer"):
+        return row
+    discount = offers.from_price(row.get("price"), row.get("mrp"))
+    if discount:
+        row["best_offer"] = discount
     return row
 
 

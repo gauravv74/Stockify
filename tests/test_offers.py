@@ -84,6 +84,60 @@ class TestMake:
         assert offer["issuer"] == "HDFC Bank"
 
 
+class TestFromPrice:
+    """MRP above selling price is the only saving any retailer actually gives
+    us. It is real and checkable, but it is not a payment offer, and the whole
+    value of `kind` is that the two can never be confused downstream."""
+
+    def test_a_price_below_mrp_is_a_saving(self):
+        offer = offers.from_price(131199, 134900)
+        assert offer["savings"] == 3701.0
+        assert offer["final_price"] == 131199.0
+        assert offer["base_price"] == 134900.0
+        assert offer["percent"] == 3
+
+    def test_it_is_never_labelled_a_card_offer(self):
+        assert offers.from_price(3899, 5695)["kind"] == "discount"
+        assert offers.from_bigbasket(BB_WITH_OFFER)["kind"] == "card"
+
+    def test_it_never_names_a_bank(self):
+        assert offers.from_price(3899, 5695)["issuer"] is None
+
+    def test_equal_mrp_and_price_is_not_a_saving(self):
+        """The normal case on groceries: BigBasket and Blinkit returned
+        mrp == price on every product sampled. That is no offer, not a ₹0 one."""
+        assert offers.from_price(30, 30) is None
+
+    def test_mrp_below_price_is_bad_data_we_decline_to_read(self):
+        assert offers.from_price(900, 843) is None
+
+    def test_missing_or_junk_numbers_yield_nothing(self):
+        for price, mrp in ((None, 100), (100, None), ("", ""), (0, 100),
+                           ("abc", "def"), (20, None)):
+            assert offers.from_price(price, mrp) is None
+
+    def test_percent_is_suppressed_when_it_would_round_to_nothing(self):
+        assert offers.from_price(9999, 10000)["percent"] is None
+
+
+class TestBest:
+    def test_a_real_card_offer_beats_a_bigger_shelf_discount(self):
+        """Different claims, not different sizes: a card offer is the stronger
+        statement even when the rupee saving is smaller."""
+        card = offers.make(savings_text="₹50 OFF", final_price=950)
+        discount = offers.from_price(500, 5000)
+        assert offers.best(card, discount) is card
+
+    def test_larger_saving_wins_within_a_kind(self):
+        small = offers.from_price(95, 100)
+        large = offers.from_price(50, 100)
+        assert offers.best(small, large) is large
+
+    def test_nothing_found_stays_nothing(self):
+        assert offers.best(None, None) is None
+        assert offers.best() is None
+
+
 class TestDescribe:
     def test_no_offer_describes_as_empty(self):
         assert offers.describe(None) == ""

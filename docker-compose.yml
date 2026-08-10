@@ -115,12 +115,17 @@ services:
           memory: 2g
 
   # Instamart, Apple, Croma. WAF-heavy and strictly rate limited, so this stays
-  # deliberately small — one process, one task at a time.
+  # one process: each process would otherwise mean another Chromium, and each
+  # client's semaphore (config.PLATFORM_CONCURRENCY) bounds only its own
+  # process. Threads are what let Instamart run several checks at once against
+  # the single shared browser — its warm path is an HTTP call, not a page
+  # action. Apple and Croma still serialize behind their own locks, so a run
+  # heavy on those platforms can occupy threads Instamart would otherwise use.
   worker-protected:
     build: .
     restart: unless-stopped
     command: ["dramatiq", "stockly.tasks", "--queues", "protected_checks",
-              "--processes", "1", "--threads", "1"]
+              "--processes", "1", "--threads", "4"]
     env_file:
       - .env
     environment: *worker_env

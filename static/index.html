@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#0f172a" />
 <title>Stockly — Live stock across platforms</title>
+<!-- The Stockly mark on its teal tile, inline rather than a binary file: the app
+     ships as one HTML document, so an icon file would be the only asset request
+     in it. This is the one copy the shared stockly-mark symbol below cannot
+     serve, because a favicon cannot reference the document that declares it —
+     the two are geometrically identical and change together. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230f766e'/%3E%3Cg%20transform='translate(4,4)'%3E%3Crect%20x='3'%20y='13'%20width='4'%20height='8'%20rx='1.2'%20fill='%235eead4'/%3E%3Crect%20x='10'%20y='8'%20width='4'%20height='13'%20rx='1.2'%20fill='%232dd4bf'/%3E%3Crect%20x='17'%20y='3'%20width='4'%20height='18'%20rx='1.2'%20fill='%2399f6e4'/%3E%3Cpath%20d='M4.5%209.5l2%202%204.5-5'%20fill='none'%20stroke='%23fff'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230f766e'/%3E%3Cg%20transform='translate(4,4)'%3E%3Crect%20x='3'%20y='13'%20width='4'%20height='8'%20rx='1.2'%20fill='%235eead4'/%3E%3Crect%20x='10'%20y='8'%20width='4'%20height='13'%20rx='1.2'%20fill='%232dd4bf'/%3E%3Crect%20x='17'%20y='3'%20width='4'%20height='18'%20rx='1.2'%20fill='%2399f6e4'/%3E%3Cpath%20d='M4.5%209.5l2%202%204.5-5'%20fill='none'%20stroke='%23fff'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/g%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;550;600;650;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
@@ -435,6 +442,16 @@ body.nav-collapsed .sidebar { width: var(--sidebar-w-collapsed); }
   box-shadow: 0 2px 8px rgba(15,118,110,.35);
 }
 .brand-mark svg { width: 18px; height: 18px; }
+/* Same tile as the sidebar brand, revealed only once the sidebar goes
+   off-canvas — see the mobile breakpoint. */
+.topbar-brand {
+  display: none;
+  width: 28px; height: 28px; flex: none;
+  place-items: center;
+  background: var(--p-600); border-radius: var(--r-md);
+  box-shadow: 0 2px 8px rgba(15,118,110,.28);
+}
+.topbar-brand svg { width: 17px; height: 17px; }
 .brand-text { min-width: 0; }
 .brand-text h1 { font-size: 15px; font-weight: 650; color: var(--n-0); letter-spacing: -.01em; }
 .brand-text p {
@@ -982,9 +999,18 @@ td.price { font-weight: 650; font-variant-numeric: tabular-nums; text-align: rig
   font-size: 11px; font-weight: 650; color: var(--ok-700);
   background: var(--ok-50); border: 1px solid var(--ok-100);
   border-radius: var(--r-xs);
+  /* "₹3,701 off" broken across two lines reads as two separate facts. */
+  white-space: nowrap;
+}
+/* A shelf discount is a weaker claim than a published card offer, so it reads
+   as information rather than as a reward. */
+.offer-badge.is-discount {
+  color: var(--p-700); background: var(--p-50);
+  border-color: var(--p-100);
 }
 .offer-none { font-size: 11.5px; color: var(--text-3); }
-td.offer .sub { margin-top: 2px; font-variant-numeric: tabular-nums; }
+td.offer .sub, .r-offer .sub { margin-top: 2px; font-variant-numeric: tabular-nums; }
+td.offer .sub s, .r-offer .sub s { color: var(--text-3); }
 .eta-sub { margin-top: 3px; }
 
 .dist {
@@ -1218,6 +1244,7 @@ body.locked #loginScreen { display: block; }
   display: flex; flex-direction: column; justify-content: center;
   padding: var(--s-10) var(--s-9); max-width: 520px; width: 100%; margin: 0 auto;
 }
+.auth-panel-badge { display: none; }
 .auth-tabs {
   position: relative; display: flex; padding: 3px; margin-bottom: var(--s-7);
   background: var(--n-100); border-radius: var(--r-lg);
@@ -1235,7 +1262,10 @@ body.locked #loginScreen { display: block; }
   background: var(--surface); border-radius: var(--r-md); box-shadow: var(--sh-sm);
   transition: transform var(--dur) var(--ease);
 }
-body.reg .auth-tab-glider { transform: translateX(100%); }
+/* setAuthMode() puts `reg` on .auth-tabs, not on body — keyed to body this
+   never matched, so the glider sat under "Sign in" while "Create account" was
+   the active tab. */
+.auth-tabs.reg .auth-tab-glider { transform: translateX(100%); }
 
 .auth-form { display: none; }
 .auth-form.active { display: block; }
@@ -1324,11 +1354,64 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
       linear-gradient(to left, rgba(15,23,42,.10), transparent) right / 10px 100% no-repeat scroll;
   }
 
+  .topbar-brand { display: grid; }
+
   .create-grid { grid-template-columns: 1fr; }
   .plat-toggles { grid-template-columns: 1fr; }
-  .auth-shell { grid-template-columns: 1fr; }
-  .auth-hero { display: none; }
-  .auth-panel { padding: var(--s-7) var(--s-5); }
+
+  /* Mobile sign-in: a branded header the form sits into, rather than the form
+     alone on an empty page. The hero used to be hidden here, which left the
+     product unnamed at the one moment a new user needs to recognise it. It
+     becomes a short banner instead — mark, name, one line of what this is —
+     and the panel lifts over its lower edge so the two read as one card. */
+  .auth-shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  /* Sized so a phone shows the whole sign-in form and the signup incentive
+     without scrolling: the hero is the part that has to give. */
+  .auth-hero {
+    text-align: center; align-items: center; justify-content: flex-start;
+    padding: calc(env(safe-area-inset-top) + var(--s-6)) var(--s-5) var(--s-8);
+    border-radius: 0 0 26px 26px;
+  }
+  .auth-hero-mark { margin: 0 auto var(--s-3); width: 46px; height: 46px; }
+  .auth-hero-mark svg { width: 27px; height: 27px; }
+  .auth-hero h1 { font-size: 25px; }
+  .auth-hero-tag { margin-top: var(--s-2); font-size: 13px; max-width: 32ch; }
+  /* The three proof points become a chip row: same content, one band deep
+     instead of three, so it supports the form instead of pushing it down. */
+  .auth-hero-list {
+    margin-top: var(--s-4); display: flex; flex-wrap: wrap;
+    justify-content: center; gap: var(--s-2);
+  }
+  .auth-hero-list li {
+    gap: var(--s-2); font-size: 11.5px; padding: 5px var(--s-3);
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.16);
+    border-radius: 999px;
+  }
+  .auth-hero-badge { display: none; }
+
+  .auth-panel {
+    position: relative; margin: -22px auto 0; padding: var(--s-5) var(--s-5)
+      calc(env(safe-area-inset-bottom) + var(--s-6));
+    justify-content: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--line); border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -8px 28px rgba(15,23,42,.08);
+  }
+  .auth-tabs { margin-bottom: var(--s-5); }
+  .auth-form h2 { font-size: 20px; }
+  .auth-form .sub { margin-bottom: var(--s-5); }
+  /* The signup incentive is real and worth keeping, but it belongs next to the
+     button that acts on it once the hero has gone compact. */
+  .auth-panel-badge {
+    display: block; margin: var(--s-5) 0 0; align-self: stretch;
+    text-align: center; font-size: 12.5px; color: var(--p-700);
+    background: var(--p-50); border: 1px solid var(--p-100);
+  }
+  /* 16px is the threshold below which iOS zooms the page on focus, which then
+     leaves the form scrolled off-centre. */
+  .auth-form input { font-size: 16px; height: 46px; }
+  .auth-submit { height: 48px; }
   .plat .label-full { display: none; }
   .plat .label-short { display: inline; }
   .modal { max-width: 100%; }
@@ -1355,14 +1438,23 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
 </head>
 <body class="locked">
 
+<!-- The Stockly mark, declared once and referenced by the sidebar, the mobile
+     top bar and the login screen, so the brand cannot drift between them. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="stockly-mark" viewBox="0 0 24 24">
+    <rect x="3" y="13" width="4" height="8" rx="1.2" fill="#5eead4"/>
+    <rect x="10" y="8" width="4" height="13" rx="1.2" fill="#2dd4bf"/>
+    <rect x="17" y="3" width="4" height="18" rx="1.2" fill="#99f6e4"/>
+    <path d="M4.5 9.5l2 2 4.5-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+</svg>
+
 <!-- ══ Auth ═══════════════════════════════════════════════════════════════ -->
 <div id="loginScreen">
   <div class="auth-shell">
     <aside class="auth-hero">
-      <div class="auth-hero-mark">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M3 3h18v4H3V3zm2 6h14l-1.2 10.2a2 2 0 01-2 1.8H8.2a2 2 0 01-2-1.8L5 9zm4 3v5m6-5v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+      <div class="auth-hero-mark" aria-hidden="true">
+        <svg><use href="#stockly-mark"/></svg>
       </div>
       <h1>Stockly</h1>
       <p class="auth-hero-tag">Live stock &amp; price tracking across every quick‑commerce platform.</p>
@@ -1428,6 +1520,11 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
         <button class="btn btn-primary auth-submit" type="submit" id="registerBtn">Create account &amp; claim 100 tokens</button>
         <p class="auth-switch">Already have an account? <button type="button" class="link-btn" id="gotoSignin">Sign in</button></p>
       </form>
+
+      <!-- The signup incentive, restated inside the panel. On a phone the hero
+           shrinks to a banner and drops it; here it sits with the button that
+           acts on it. Hidden on desktop, where the hero already says it. -->
+      <div class="auth-hero-badge auth-panel-badge">🎁 New here? Get <strong>100 free test tokens</strong> on signup.</div>
     </div>
   </div>
 </div>
@@ -1498,12 +1595,7 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
       <div class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <rect x="3" y="13" width="4" height="8" rx="1.2" fill="#5eead4"/>
-          <rect x="10" y="8" width="4" height="13" rx="1.2" fill="#2dd4bf"/>
-          <rect x="17" y="3" width="4" height="18" rx="1.2" fill="#99f6e4"/>
-          <path d="M4.5 9.5l2 2 4.5-5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <svg><use href="#stockly-mark"/></svg>
       </div>
       <div class="brand-text">
         <h1>Stockly</h1>
@@ -1573,6 +1665,12 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
       <button type="button" class="icon-btn nav-toggle" id="navToggle" aria-label="Open menu">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
+      <!-- On a phone the sidebar (and with it the brand) is off-canvas, so the
+           top bar carries the mark instead. Hidden on desktop, where showing it
+           beside the sidebar brand would be the logo twice. -->
+      <div class="topbar-brand" aria-hidden="true">
+        <svg><use href="#stockly-mark"/></svg>
+      </div>
       <div class="topbar-title">
         <h1 id="pageTitle">Availability</h1>
         <p id="pageSubtitle">Check live stock and prices across quick-commerce platforms</p>
@@ -1773,7 +1871,7 @@ body.reg .auth-tab-glider { transform: translateX(100%); }
                       <th style="width:26%;">Product</th>
                       <th style="width:124px;">Status</th>
                       <th style="width:96px; text-align:right;">Price</th>
-                      <th style="width:150px;">Best Card Offer</th>
+                      <th style="width:150px;">Best Offer</th>
                     </tr>
                   </thead>
                   <tbody id="tbody">
@@ -2209,6 +2307,23 @@ function applyLocationAccess() {
   }
 }
 
+// Adopt the server's remembered UI state before applyPlatformAccess() runs, so
+// it validates the user's own choice against their access rather than
+// validating the Blinkit default. No stored platform leaves `platform` at that
+// default — the only case where Blinkit applies.
+function restorePrefs(data) {
+  const saved = (data && data.prefs || {}).platform;
+  if (saved) platform = saved;
+}
+
+// Fire-and-forget: a selection the user can see and change is not worth a
+// spinner, and losing one costs them a single click next session.
+function savePref(patch) {
+  if (!currentUser) return;
+  apiJson('/api/prefs', { method: 'POST', body: JSON.stringify(patch) })
+    .catch(() => {});
+}
+
 function applyPlatformAccess() {
   const allowed = new Set(allowedPlatforms);
   document.querySelectorAll('.plat').forEach(btn => {
@@ -2253,6 +2368,7 @@ async function bootstrapAuth() {
     const data = await apiJson('/api/me');
     currentUser = data.user;
     allowedPlatforms = data.platforms || [];
+    restorePrefs(data);
     if (data.must_change_password) currentUser.must_change_password = true;
     applyAuthUI();
     if (currentUser) await onLoggedIn();
@@ -2318,6 +2434,7 @@ $('pwdSave').addEventListener('click', async () => {
     });
     currentUser = data.user;
     allowedPlatforms = data.platforms || [];
+    restorePrefs(data);
     $('pwdModal').classList.remove('open');
     applyAuthUI();
     await onLoggedIn();
@@ -2389,6 +2506,7 @@ $('loginForm').addEventListener('submit', async (e) => {
     });
     currentUser = data.user;
     allowedPlatforms = data.platforms || [];
+    restorePrefs(data);
     if (data.must_change_password) currentUser.must_change_password = true;
     $('loginPass').value = '';
     applyAuthUI();
@@ -2428,6 +2546,7 @@ $('registerForm').addEventListener('submit', async (e) => {
     });
     currentUser = data.user;
     allowedPlatforms = data.platforms || [];
+    restorePrefs(data);
     $('regPass').value = '';
     $('regPass2').value = '';
     applyAuthUI();
@@ -2769,7 +2888,13 @@ function selectPlatform(p) {
   updateStepper();
 }
 document.querySelectorAll('.plat').forEach(t =>
-  t.addEventListener('click', () => selectPlatform(t.dataset.platform)));
+  t.addEventListener('click', () => {
+    selectPlatform(t.dataset.platform);
+    // Only a click is remembered. When applyPlatformAccess() falls back
+    // because access was revoked, the user's real choice stays on file and
+    // returns if they get that platform back.
+    if (platform === t.dataset.platform) savePref({ platform });
+  }));
 
 function setLocMode(mode) {
   locMode = mode;
@@ -3013,9 +3138,12 @@ function priceHtml(r) {
   return rupees(price);
 }
 
-// Card offers come from the retailer or not at all — see stockly/offers.py. An
+// Offers come from the retailer or not at all — see stockly/offers.py. An
 // absent offer is a finding, not a blank: "No offer found" tells the shopper we
 // looked, where an empty cell reads as a bug.
+//
+// A card offer and a shelf discount are different claims, so they are styled
+// differently and the discount never borrows the word "card".
 function offerHtml(r) {
   const o = r.best_offer;
   if (!o) return '<span class="offer-none">No offer found</span>';
@@ -3025,12 +3153,28 @@ function offerHtml(r) {
     minimumFractionDigits: Number.isInteger(Number(v)) ? 0 : 2,
     maximumFractionDigits: 2,
   });
-  // The issuer is only ever shown when the retailer named one; today none do.
-  const head = o.issuer || o.savings_text || 'Card offer';
+  const card = o.kind !== 'discount';
   const bits = [];
-  if (o.issuer && o.savings_text) bits.push(escHtml(o.savings_text));
-  if (o.final_price != null) bits.push('pay ' + rupees(o.final_price));
-  return `<span class="offer-badge">${escHtml(head)}</span>` +
+  let head;
+  if (card) {
+    // The issuer is only ever shown when the retailer named one; today none do.
+    head = o.issuer || o.savings_text || 'Card offer';
+    if (o.issuer && o.savings_text) bits.push(escHtml(o.savings_text));
+    // A card price is genuinely new information: it is not the price shown in
+    // the Price column, which is what you pay without the offer.
+    if (o.final_price != null) bits.push('pay ' + escHtml(rupees(o.final_price)));
+  } else {
+    // The Price column already shows the struck-through MRP and the percentage,
+    // so repeating them here would fill the cell with what the row already
+    // says. The rupee saving is the one part it does not state.
+    head = o.savings != null ? rupees(o.savings) + ' off'
+                             : (o.savings_text || 'Below MRP');
+    if (o.percent) bits.push(o.percent + '% below MRP');
+  }
+  const cls = card ? 'offer-badge' : 'offer-badge is-discount';
+  const title = card ? 'Payment offer published by the retailer'
+                     : 'Selling price below the retailer\'s listed MRP';
+  return `<span class="${cls}" title="${title}">${escHtml(head)}</span>` +
          (bits.length ? `<div class="sub">${bits.join(' · ')}</div>` : '');
 }
 
@@ -3538,13 +3682,16 @@ window.addEventListener('focus', catchUpNow);
 function exportCSV() {
   // The export stays a superset of the table: ETA and inventory lost their
   // column but not their value to anyone analysing a run in a spreadsheet.
-  const cols = ['platform','pincode','location','location_full','distance_km','product','status','available','name','variant','brand','price','mrp','inventory','eta','offer_issuer','offer_savings','offer_final_price','merchant_id','lat','lon'];
+  const cols = ['platform','pincode','location','location_full','distance_km','product','status','available','name','variant','brand','price','mrp','inventory','eta','offer_kind','offer_issuer','offer_savings','offer_final_price','merchant_id','lat','lon'];
   const esc = (v) => {
     v = v == null ? '' : String(v);
     return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   };
   const cell = (r, c, d) => {
     if (c === 'distance_km') return d == null ? '' : d.toFixed(1);
+    // Without the kind, a spreadsheet cannot tell a published card offer from
+    // a price below MRP — which is the whole distinction the column carries.
+    if (c === 'offer_kind') return (r.best_offer || {}).kind || '';
     if (c === 'offer_issuer') return (r.best_offer || {}).issuer || '';
     if (c === 'offer_savings') return (r.best_offer || {}).savings_text || '';
     if (c === 'offer_final_price') {

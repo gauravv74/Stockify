@@ -232,6 +232,22 @@ def admin_health():
     return jsonify(body)
 
 
+def _session_payload(user, **extra):
+    """What every route that establishes a session hands back to the client.
+
+    One definition so the four of them cannot drift: a preference the UI
+    restores has to arrive on login just as reliably as on a page reload.
+    """
+    body = {
+        "user": user,
+        "platforms": auth.allowed_platforms(user),
+        "prefs": user.get("prefs") or {},
+        "must_change_password": bool(user.get("must_change_password")),
+    }
+    body.update(extra)
+    return body
+
+
 @app.route("/api/login", methods=["POST"])
 def api_login():
     payload = request.get_json(force=True, silent=True) or {}
@@ -239,11 +255,7 @@ def api_login():
     if not user:
         return jsonify({"error": "Invalid username or password"}), 401
     auth.login_user(user)
-    return jsonify({
-        "user": user,
-        "platforms": auth.allowed_platforms(user),
-        "must_change_password": bool(user.get("must_change_password")),
-    })
+    return jsonify(_session_payload(user))
 
 
 @app.route("/api/register", methods=["POST"])
@@ -253,12 +265,9 @@ def api_register():
     if err:
         return jsonify({"error": err}), 400
     auth.login_user(user)
-    return jsonify({
-        "user": user,
-        "platforms": auth.allowed_platforms(user),
-        "must_change_password": False,
-        "welcome_bonus": auth.SIGNUP_BONUS_TOKENS,
-    })
+    return jsonify(_session_payload(
+        user, must_change_password=False,
+        welcome_bonus=auth.SIGNUP_BONUS_TOKENS))
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -272,11 +281,21 @@ def api_me():
     user = auth.current_user()
     if not user:
         return jsonify({"user": None}), 401
-    return jsonify({
-        "user": user,
-        "platforms": auth.allowed_platforms(user),
-        "must_change_password": bool(user.get("must_change_password")),
-    })
+    return jsonify(_session_payload(user))
+
+
+@app.route("/api/prefs", methods=["POST"])
+@auth.login_required
+def api_save_prefs():
+    """Remember a slice of UI state for the signed-in user.
+
+    Best-effort by design: the client fires this when a selection changes and
+    never waits on it, so a failure here costs the user nothing beyond starting
+    from the default next time.
+    """
+    payload = request.get_json(force=True, silent=True) or {}
+    me = auth.current_user()
+    return jsonify({"prefs": auth.save_prefs(me["id"], payload)})
 
 
 @app.route("/api/change-password", methods=["POST"])
@@ -292,11 +311,7 @@ def api_change_password():
     if err:
         return jsonify({"error": err}), 400
     auth.login_user(user)  # refresh session claims
-    return jsonify({
-        "user": user,
-        "platforms": auth.allowed_platforms(user),
-        "must_change_password": False,
-    })
+    return jsonify(_session_payload(user, must_change_password=False))
 
 
 @app.route("/api/admin/users", methods=["GET"])
