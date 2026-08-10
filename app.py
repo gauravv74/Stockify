@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -22,9 +23,12 @@ import config
 import jobs
 import watches
 import whatsapp
-from stockly import broker, checks, dispatcher, geo, obs
 
-log = obs.setup("stockly.api")
+logging.basicConfig(
+    level=logging.INFO if config.IS_PROD else logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("stockly")
 
 ALL_PLATFORMS = auth.ALL_PLATFORMS
 
@@ -46,7 +50,6 @@ _created_default_admin = False
 _, _created_default_admin = auth.ensure_users_file()
 watches.init_db()
 jobs.init_db()
-geo.init_db()
 if _created_default_admin:
     log.warning(
         "Default admin created (username=%s). Change password immediately.",
@@ -168,84 +171,12 @@ def index():
 
 @app.route("/api/health")
 def health():
-    """Liveness + dependency check. Deliberately terse: this is public, so it
-    reports whether each dependency is reachable, never how it's addressed."""
-    db_ok, db_detail = _probe_db()
-    redis_ok, redis_detail = broker.ping()
-
-    # The API still serves (and degrades to inline execution) without Redis, so
-    # a broker outage is reported but doesn't fail the check.
-    ok = db_ok
     return jsonify({
-        "ok": ok,
-        "service": "stockly",
-        "env": config.ENV,
-        "checks": {
-            "database": {"ok": db_ok, "detail": db_detail},
-            "redis": {"ok": redis_ok, "detail": redis_detail},
-        },
-        "queue_enabled": config.QUEUE_ENABLED,
-        "degraded": not redis_ok,
-    }), (200 if ok else 503)
-
-
-def _probe_db():
-    try:
-        jobs.active_job_count()
-        return True, "ok"
-    except Exception as exc:  # noqa: BLE001
-        return False, str(exc)[:200]
-
-
-@app.route("/api/admin/health")
-@auth.admin_required
-def admin_health():
-    """Operational detail — worker queues, job counts, metrics, WhatsApp bridge.
-
-    Admin-only because queue depths and infrastructure addresses are useful to
-    an attacker sizing up the system.
-    """
-    redis_ok, redis_detail = broker.ping()
-    body = {
+        "ok": True,
         "service": "stockly",
         "env": config.ENV,
         "db": str(config.DB_PATH),
-        "redis": {"ok": redis_ok, "detail": redis_detail,
-                  "url": broker._redacted(config.REDIS_URL)},
-        "queues": broker.queue_depths(),
-        "jobs": {"active": jobs.active_job_count(),
-                 "outstanding_checks": jobs.total_queued_checks()},
-        "limits": {
-            "max_active_jobs_per_user": config.MAX_ACTIVE_JOBS_PER_USER,
-            "max_search_checks": config.MAX_SEARCH_CHECKS,
-            "max_total_queued_checks": config.MAX_TOTAL_QUEUED_CHECKS,
-            "platform_concurrency": config.PLATFORM_CONCURRENCY,
-        },
-        "metrics": obs.metrics.snapshot(),
-    }
-    try:
-        r = cffi_requests.get(_bridge_url() + "/status",
-                              headers=_bridge_headers(), timeout=5)
-        body["whatsapp"] = r.json()
-    except Exception as exc:  # noqa: BLE001
-        body["whatsapp"] = {"ok": False, "error": str(exc)[:120]}
-    return jsonify(body)
-
-
-def _session_payload(user, **extra):
-    """What every route that establishes a session hands back to the client.
-
-    One definition so the four of them cannot drift: a preference the UI
-    restores has to arrive on login just as reliably as on a page reload.
-    """
-    body = {
-        "user": user,
-        "platforms": auth.allowed_platforms(user),
-        "prefs": user.get("prefs") or {},
-        "must_change_password": bool(user.get("must_change_password")),
-    }
-    body.update(extra)
-    return body
+    })
 
 
 @app.route("/api/login", methods=["POST"])
@@ -255,7 +186,11 @@ def api_login():
     if not user:
         return jsonify({"error": "Invalid username or password"}), 401
     auth.login_user(user)
-    return jsonify(_session_payload(user))
+    return jsonify({
+        "user": user,
+        "platforms": auth.allowed_platforms(user),
+        "must_change_password": bool(user.get("must_change_password")),
+    })
 
 
 @app.route("/api/register", methods=["POST"])
@@ -265,9 +200,12 @@ def api_register():
     if err:
         return jsonify({"error": err}), 400
     auth.login_user(user)
-    return jsonify(_session_payload(
-        user, must_change_password=False,
-        welcome_bonus=auth.SIGNUP_BONUS_TOKENS))
+    return jsonify({
+        "user": user,
+        "platforms": auth.allowed_platforms(user),
+        "must_change_password": False,
+        "welcome_bonus": auth.SIGNUP_BONUS_TOKENS,
+    })
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -281,21 +219,11 @@ def api_me():
     user = auth.current_user()
     if not user:
         return jsonify({"user": None}), 401
-    return jsonify(_session_payload(user))
-
-
-@app.route("/api/prefs", methods=["POST"])
-@auth.login_required
-def api_save_prefs():
-    """Remember a slice of UI state for the signed-in user.
-
-    Best-effort by design: the client fires this when a selection changes and
-    never waits on it, so a failure here costs the user nothing beyond starting
-    from the default next time.
-    """
-    payload = request.get_json(force=True, silent=True) or {}
-    me = auth.current_user()
-    return jsonify({"prefs": auth.save_prefs(me["id"], payload)})
+    return jsonify({
+        "user": user,
+        "platforms": auth.allowed_platforms(user),
+        "must_change_password": bool(user.get("must_change_password")),
+    })
 
 
 @app.route("/api/change-password", methods=["POST"])
@@ -311,7 +239,11 @@ def api_change_password():
     if err:
         return jsonify({"error": err}), 400
     auth.login_user(user)  # refresh session claims
-    return jsonify(_session_payload(user, must_change_password=False))
+    return jsonify({
+        "user": user,
+        "platforms": auth.allowed_platforms(user),
+        "must_change_password": False,
+    })
 
 
 @app.route("/api/admin/users", methods=["GET"])
@@ -406,22 +338,6 @@ def admin_list_searches():
     return jsonify({"searches": auth.list_searches(limit)})
 
 
-@app.route("/api/products/top")
-@auth.login_required
-def api_top_products():
-    """The signed-in user's most-searched products, for one-click re-running.
-
-    Scoped to the caller: a shopper's shortcuts should reflect their own work,
-    and it keeps one tenant's product interests out of another's UI.
-    """
-    user = auth.current_user()
-    try:
-        limit = int(request.args.get("limit", 4))
-    except (TypeError, ValueError):
-        limit = 4
-    return jsonify({"products": auth.top_products(user.get("id"), limit=limit)})
-
-
 @app.route("/api/cities")
 @auth.login_required
 def api_cities():
@@ -456,18 +372,92 @@ def api_geocode():
     })
 
 
-_blank_row = checks.blank_row
+def _blank_row(idx, pin, place, lat, lon, product, platform):
+    return {
+        "type": "result", "index": idx, "pincode": pin, "platform": platform,
+        "location": place or "", "lat": lat, "lon": lon, "product": product,
+        "status": "", "available": "", "name": "", "variant": "", "brand": "",
+        "price": "", "mrp": "", "inventory": "", "eta": "", "merchant_id": "",
+    }
+
+
+def _check_blinkit(session, q, lat, lon):
+    serviceable, prods, code = bk.blinkit_search(session, q, lat, lon)
+    time.sleep(bk.REQUEST_PAUSE)
+    if serviceable is False:
+        return {"status": "not_serviceable"}
+    if serviceable is None:
+        return {"status": f"error_{code}"}
+    m = bk.best_match(q, prods)
+    if not m:
+        return {"status": "not_found"}
+    return {
+        "status": "available" if m["available"] else "out_of_stock",
+        "available": "yes" if m["available"] else "no",
+        "name": m["name"], "variant": m["variant"], "brand": m["brand"],
+        "price": m["price"], "mrp": m["mrp"], "inventory": m["inventory"],
+        "eta": m["eta"], "merchant_id": m["merchant_id"],
+    }
+
+
+def _check_instamart(q, lat, lon):
+    import swiggy_check as sw
+    res = sw.client.check(float(lat), float(lon), q)
+    return sw.match_row(q, res)
+
+
+def _check_zepto(q, lat, lon):
+    import zepto_check as zp
+    res = zp.client.check(float(lat), float(lon), q)
+    return zp.match_row(q, res)
+
+
+def _check_bigbasket(q, lat, lon, pin):
+    import bigbasket_check as bb
+    res = bb.client.check(str(lat), str(lon), q, pin)
+    return bb.match_row(q, res)
+
+
+def _check_flipkart(q, lat, lon):
+    import flipkart_check as fk
+    res = fk.client.check(float(lat), float(lon), q)
+    return fk.match_row(q, res)
+
+
+def _check_jiomart(q, lat, lon, pin):
+    import jiomart_check as jm
+    res = jm.client.check(float(lat), float(lon), q, pin)
+    return jm.match_row(q, res)
+
+
+def _check_apple(q, lat, lon, pin):
+    import apple_check as ap
+    res = ap.client.check(float(lat), float(lon), q, pin)
+    return ap.match_row(q, res)
+
+
+def _check_croma(q, lat, lon, pin):
+    import croma_check as cr
+    res = cr.client.check(float(lat), float(lon), q, pin)
+    return cr.match_row(q, res)
 
 
 def _check_one(platform, session, q, lat, lon, pin):
-    """Single check, delegated to the shared executor.
-
-    Only the legacy inline fallback still calls this; normal runs execute in
-    the worker containers. Kept as a delegate (rather than its own dispatch
-    chain) so the two paths can never diverge again.
-    """
-    return checks.execute_platform_check(
-        platform, q, pin, lat=lat, lon=lon, session=session)
+    if platform == "instamart":
+        return _check_instamart(q, lat, lon)
+    if platform == "zepto":
+        return _check_zepto(q, lat, lon)
+    if platform == "bigbasket":
+        return _check_bigbasket(q, lat, lon, pin)
+    if platform == "flipkart":
+        return _check_flipkart(q, lat, lon)
+    if platform == "jiomart":
+        return _check_jiomart(q, lat, lon, pin)
+    if platform == "apple":
+        return _check_apple(q, lat, lon, pin)
+    if platform == "croma":
+        return _check_croma(q, lat, lon, pin)
+    return _check_blinkit(session, q, lat, lon)
 
 
 # ---------------------------------------------------------------------------
@@ -751,38 +741,16 @@ def check_start():
         "products": products,
         "cities": selected_cities,
     }
+    job_id = jobs.create_job(user.get("id"), meta, total)
+    t = threading.Thread(
+        target=_run_check_job,
+        args=(job_id, pincodes, products, platforms),
+        kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by,
+                "user_id": user.get("id"), "is_admin": is_admin},
+        daemon=True)
+    t.start()
 
-    # Hand the run to the queue. Everything above is cheap; nothing here
-    # touches a retailer, launches a browser or starts a thread, so the route
-    # returns in milliseconds regardless of how large the search is.
-    try:
-        job_id, total, queued = dispatcher.start_search(
-            user, meta, pincodes, products, platforms,
-            ref_lat=ref_lat, ref_lon=ref_lon, order_by=order_by)
-    except dispatcher.LimitExceeded as limit:
-        body, status = limit.to_response()
-        return jsonify(body), status
-
-    if not queued:
-        # Redis is down. Rather than fail the user's search, fall back to the
-        # legacy in-process runner. Degraded (scraping in the web tier again)
-        # but functional, and /api/health reports the broker as unavailable.
-        log.warning("queue unavailable — running job %s inline", job_id)
-        threading.Thread(
-            target=_run_check_job,
-            args=(job_id, pincodes, products, platforms),
-            kwargs={"ref_lat": ref_lat, "ref_lon": ref_lon, "order_by": order_by,
-                    "user_id": user.get("id"), "is_admin": is_admin},
-            daemon=True).start()
-
-    return jsonify({
-        "job_id": job_id,
-        "meta": meta,
-        "status": jobs.QUEUED if queued else jobs.RUNNING,
-        "total": total,
-        "queued": queued,
-        "balance": None if is_admin else auth.get_balance(user.get("id")),
-    }), 202
+    return jsonify({"job_id": job_id, "meta": meta, "balance": None if is_admin else auth.get_balance(user.get("id"))})
 
 
 @app.route("/api/check/poll")
@@ -959,6 +927,17 @@ def api_create_watches():
         return jsonify({"error": "Enter at least one product."}), 400
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
+
+    # Token gate: a non-admin with an empty wallet can't register watches — they
+    # would never run anyway (the worker skips owners out of tokens), so block
+    # creation up front with a clear message instead of silently adding dead
+    # watches.
+    if user.get("role") != "admin" and auth.get_balance(user.get("id")) <= 0:
+        return jsonify({
+            "error": "Your tokens are used up. Watches need tokens to run — please contact the admin for a recharge.",
+            "code": "tokens_exhausted",
+            "balance": 0,
+        }), 402
 
     created, errors = [], []
     for pin in pincodes:
