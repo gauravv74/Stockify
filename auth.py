@@ -90,22 +90,6 @@ def _cities_from_json(raw):
     return [str(c) for c in data]
 
 
-# UI state we are willing to remember for a user. An allow-list rather than a
-# free-form blob: this is written straight from the browser, so anything not
-# named here is discarded instead of being stored and replayed on next login.
-PREF_KEYS = ("platform",)
-
-
-def _prefs_from_json(raw):
-    try:
-        data = json.loads(raw) if raw else {}
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {k: data[k] for k in PREF_KEYS if k in data}
-
-
 def _row_to_user(row):
     if not row:
         return None
@@ -119,7 +103,6 @@ def _row_to_user(row):
         "cities": _cities_from_json(row["cities_json"]) if "cities_json" in keys else [],
         "allow_pincodes": bool(row["allow_pincodes"]) if "allow_pincodes" in keys else True,
         "token_balance": int(row["token_balance"]) if "token_balance" in keys and row["token_balance"] is not None else 0,
-        "prefs": _prefs_from_json(row["prefs_json"]) if "prefs_json" in keys else {},
         "active": bool(row["active"]),
         "must_change_password": bool(row["must_change_password"]),
         "created_at": row["created_at"],
@@ -137,7 +120,6 @@ def _public_user(u):
         "allow_pincodes": True if u.get("role") == "admin" else bool(u.get("allow_pincodes", True)),
         # Admins are unlimited; expose null so the UI can show "∞" for them.
         "token_balance": None if u.get("role") == "admin" else int(u.get("token_balance", 0) or 0),
-        "prefs": dict(u.get("prefs") or {}),
         "active": bool(u.get("active", True)),
         "must_change_password": bool(u.get("must_change_password", False)),
         "created_at": u.get("created_at"),
@@ -230,11 +212,6 @@ def init_db():
                 conn.execute("ALTER TABLE users ADD COLUMN cities_json TEXT NOT NULL DEFAULT '[]'")
             if "allow_pincodes" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN allow_pincodes INTEGER NOT NULL DEFAULT 1")
-            # Remembered UI state. Empty for existing rows, which is what makes
-            # the Blinkit default apply only to users who never chose anything.
-            if "prefs_json" not in cols:
-                conn.execute(
-                    "ALTER TABLE users ADD COLUMN prefs_json TEXT NOT NULL DEFAULT '{}'")
             # Token/credit wallet (monetisation). New users start at 0; an admin
             # tops them up. Admins are never charged regardless of this value.
             if "token_balance" not in cols:
@@ -550,49 +527,6 @@ def log_search(user, platform, products, cities, pincode_count, total_checks):
         pass
 
 
-def top_products(user_id=None, limit=4, scan=300):
-    """The products this user searches most, newest activity breaking ties.
-
-    ``searches.products`` holds the raw comma-separated input, so counting has
-    to happen after splitting. We read a bounded window of recent rows rather
-    than the whole table: suggestions should reflect what someone is working on
-    now, and it keeps the query cheap enough to run on every page load.
-
-    Matching is case- and space-insensitive so "IPhone 17" and "iphone 17" are
-    one product, but the label shown is the most recent spelling the user typed.
-    """
-    scan = max(1, min(int(scan or 300), 2000))
-    limit = max(1, min(int(limit or 4), 20))
-    sql = "SELECT products FROM searches"
-    params = []
-    if user_id:
-        sql += " WHERE user_id = ?"
-        params.append(user_id)
-    sql += " ORDER BY id DESC LIMIT ?"
-    params.append(scan)
-
-    try:
-        with _conn() as conn:
-            rows = conn.execute(sql, params).fetchall()
-    except Exception:
-        return []
-
-    counts, labels, order = {}, {}, {}
-    for position, r in enumerate(rows):
-        for raw in str(r["products"] or "").split(","):
-            name = " ".join(raw.split())
-            if not name:
-                continue
-            key = name.lower()
-            counts[key] = counts.get(key, 0) + 1
-            if key not in labels:      # rows arrive newest-first
-                labels[key] = name
-                order[key] = position
-
-    ranked = sorted(counts, key=lambda k: (-counts[k], order[k]))
-    return [{"product": labels[k], "count": counts[k]} for k in ranked[:limit]]
-
-
 def list_searches(limit=200):
     limit = max(1, min(int(limit or 200), 1000))
     with _conn() as conn:
@@ -744,45 +678,6 @@ def allowed_platforms(user):
         return list(ALL_PLATFORMS)
     plats = user.get("platforms") or {}
     return [p for p in ALL_PLATFORMS if plats.get(p)]
-
-
-def get_prefs(user_id):
-    """A user's remembered UI state, or {} if they have never chosen."""
-    return (find_user_by_id(user_id) or {}).get("prefs") or {}
-
-
-def save_prefs(user_id, patch):
-    """Merge ``patch`` into a user's remembered UI state and return the result.
-
-    Merges rather than replaces so a client that knows about one preference
-    cannot wipe another it has never heard of. Unknown keys are dropped by
-    ``_prefs_from_json``, and a platform the user cannot access is refused
-    here — otherwise revoking access would leave them pinned to a platform
-    every future login tries and fails to restore.
-    """
-    if not user_id or not isinstance(patch, dict):
-        return {}
-    clean = {k: patch[k] for k in PREF_KEYS if k in patch}
-
-    platform = clean.get("platform")
-    if platform is not None:
-        allowed = set(allowed_platforms(find_user_by_id(user_id)))
-        ok = platform in allowed or (platform == "all" and len(allowed) >= 2)
-        if not ok:
-            clean.pop("platform")
-
-    if not clean:
-        return get_prefs(user_id)
-
-    with _conn() as conn:
-        row = conn.execute("SELECT prefs_json FROM users WHERE id = ?",
-                           (user_id,)).fetchone()
-        if not row:
-            return {}
-        merged = {**_prefs_from_json(row["prefs_json"]), **clean}
-        conn.execute("UPDATE users SET prefs_json = ? WHERE id = ?",
-                     (json.dumps(merged), user_id))
-    return merged
 
 
 def allowed_cities(user):
