@@ -54,6 +54,16 @@ if _created_default_admin:
     )
 
 
+@app.after_request
+def add_no_cache_headers(response):
+    """Prevent browser caching of API responses to ensure fresh data."""
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 def load_cities():
     with open(config.CITIES_FILE) as f:
         return json.load(f).get("cities", [])
@@ -163,7 +173,11 @@ def resolve_platforms(platform, allowed):
 
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    response = send_from_directory("static", "index.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/api/health")
