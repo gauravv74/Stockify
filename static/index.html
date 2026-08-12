@@ -357,6 +357,7 @@ select {
 .b-not_serviceable { color: var(--er-700); background: var(--er-50); }
 .b-geocode_failed  { color: var(--er-700); background: var(--er-50); }
 .b-error           { color: var(--er-700); background: var(--er-50); }
+.badge[title]      { cursor: help; }
 .b-pending         { color: var(--n-500);  background: var(--n-100); }
 
 /* Platform tag — the dot carries the brand colour so text stays readable. */
@@ -3061,6 +3062,21 @@ function statusLabel(s) {
     geocode_failed: 'Geocode failed'
   })[s] || s;
 }
+function statusTooltip(s) {
+  if (s === 'geocode_failed') {
+    return 'Could not find coordinates for this pincode. The pincode may be invalid, newly created, or not yet mapped in OpenStreetMap. Try verifying the pincode is correct.';
+  }
+  if (s === 'not_serviceable') {
+    return 'This platform does not deliver to this pincode.';
+  }
+  if (s === 'not_found') {
+    return 'This product is not listed on the platform for this location.';
+  }
+  if (s && s.startsWith('error')) {
+    return 'A temporary error occurred while checking. This may resolve on retry.';
+  }
+  return '';
+}
 function badgeClass(s) {
   if (s && s.startsWith('error')) return 'b-error';
   return 'b-' + (s || 'pending');
@@ -3230,7 +3246,8 @@ function rowHtml(r) {
   const mapChip = mapU
     ? ` <a class="maplink" href="${mapU}" target="_blank" rel="noopener" title="Open exact checked location in Google Maps">📍 Map</a>`
     : '';
-  const badge = `<span class="badge ${badgeClass(r.status)}">${escHtml(statusLabel(r.status))}</span>`;
+  const tooltip = statusTooltip(r.status);
+  const badge = `<span class="badge ${badgeClass(r.status)}"${tooltip ? ` title="${escHtml(tooltip)}"` : ''}>${escHtml(statusLabel(r.status))}</span>`;
   const pTag = platformTag(r.platform);
   const tr = `
     <td class="col-platform">${pTag}</td>
@@ -3920,8 +3937,9 @@ function renderWatches(list) {
 
     for (const w of items) {
       const status = w.last_status || '';
+      const wTooltip = statusTooltip(status);
       const badge = status
-        ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
+        ? `<span class="badge ${badgeClass(status)}"${wTooltip ? ` title="${escHtml(wTooltip)}"` : ''}>${escHtml(statusLabel(status))}</span>`
         : '<span class="sub">pending</span>';
       const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
       html += `<tr class="wdetail wd-${gid}" data-id="${w.id}" style="display:none;">
@@ -4051,8 +4069,9 @@ async function loadAdminWatches() {
           <tbody>`;
       for (const w of wlist) {
         const status = w.last_status || '';
+        const wTooltip = statusTooltip(status);
         const badge = status
-          ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
+          ? `<span class="badge ${badgeClass(status)}"${wTooltip ? ` title="${escHtml(wTooltip)}"` : ''}>${escHtml(statusLabel(status))}</span>`
           : '<span class="sub">pending</span>';
         const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
         html += `<tr data-id="${w.id}">
