@@ -338,6 +338,10 @@ TOKEN_COST = {
     "available": TOKEN_COST_IN_STOCK,
     "out_of_stock": TOKEN_COST_OUT_OF_STOCK,
 }
+# Cost per watch creation (each product × pincode × platform combination).
+TOKEN_COST_WATCH = int(os.environ.get("STOCKLY_TOKEN_COST_WATCH", "1"))
+# Cost per watch poll cycle (charged when the worker checks a watch).
+TOKEN_COST_WATCH_POLL = int(os.environ.get("STOCKLY_TOKEN_COST_WATCH_POLL", "1"))
 
 # Per-platform minimum spacing (seconds) between two *consecutive* checks of
 # that platform, to dodge fingerprint/cadence rate limits. Swiggy Instamart's

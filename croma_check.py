@@ -60,6 +60,7 @@ from playwright.async_api import async_playwright
 
 import blinkit_check as bk
 import config
+from stockly import offers
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
@@ -105,6 +106,43 @@ async (q) => {
     const mrp = p.mrp && p.mrp.value != null ? p.mrp.value : null;
     const hasStock = Array.isArray(p.stockFlag)
       ? p.stockFlag.length > 0 : !!p.stockFlag;
+    // Extract bank/card offers from promotions or offerDetails
+    let cardOffer = null;
+    const promos = p.promotions || p.potentialPromotions || [];
+    for (const promo of promos) {
+      const desc = (promo.description || promo.title || promo.name || '').trim();
+      if (!desc) continue;
+      // Look for bank/card offer patterns
+      if (/bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master/i.test(desc)) {
+        const savM = desc.match(/₹\s?([\d,]+)/);
+        const pctM = desc.match(/(\d+)\s*%/);
+        cardOffer = {
+          text: desc,
+          savings: savM ? Number(savM[1].replace(/,/g, '')) : null,
+          percent: pctM ? Number(pctM[1]) : null,
+        };
+        break;
+      }
+    }
+    // Also check offerDetails / bankOffers (Croma sometimes nests these)
+    if (!cardOffer) {
+      const offers = p.offerDetails || p.bankOffers || p.offers || [];
+      const offerArr = Array.isArray(offers) ? offers : (offers.offers || []);
+      for (const o of offerArr) {
+        const desc = (o.offerText || o.description || o.title || o.name || '').trim();
+        if (!desc) continue;
+        if (/bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master/i.test(desc)) {
+          const savM = desc.match(/₹\s?([\d,]+)/);
+          const pctM = desc.match(/(\d+)\s*%/);
+          cardOffer = {
+            text: desc,
+            savings: savM ? Number(savM[1].replace(/,/g, '')) : null,
+            percent: pctM ? Number(pctM[1]) : null,
+          };
+          break;
+        }
+      }
+    }
     items.push({
       name: (p.name || '').replace(/\s+/g, ' ').trim(),
       variant: '',
@@ -114,6 +152,7 @@ async (q) => {
       inStock: hasStock,
       eta: p.productMessage || '',
       merchant_id: p.code || '',
+      cardOffer: cardOffer,
     });
   }
   return {status: 200, total: (j.pagination || {}).totalResults, items: items};
@@ -350,13 +389,24 @@ def match_row(query, result):
         available = bool(pin_avail)
         eta = (m.get("eta") or "") if available else "Not available for this pincode"
 
-    return {
+    row = {
         "status": "available" if available else "out_of_stock",
         "available": "yes" if available else "no",
         "name": m.get("name"), "variant": m.get("variant", ""), "brand": m.get("brand", ""),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
         "eta": eta, "merchant_id": m.get("merchant_id", ""),
     }
+    # Pass through any credit card offer extracted from the search API.
+    co = m.get("cardOffer")
+    if co and isinstance(co, dict) and (co.get("savings") or co.get("text")):
+        row["best_offer"] = offers.make(
+            savings_text=co.get("text") if not co.get("savings") else f"₹{co['savings']} OFF",
+            final_price=(m.get("price") - co["savings"]) if co.get("savings") and m.get("price") else None,
+            base_price=m.get("price"),
+            detail=co.get("text"),
+            kind="card",
+        )
+    return row
 
 
 if __name__ == "__main__":

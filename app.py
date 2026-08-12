@@ -960,18 +960,51 @@ def api_create_watches():
     if not pincodes:
         return jsonify({"error": "Select a city and/or enter at least one pincode."}), 400
 
+    # Token gate: non-admins need tokens to create watches.
+    is_admin = user.get("role") == "admin"
+    total_watches = len(pincodes) * len(product_specs) * len(platforms)
+    token_cost_per_watch = config.TOKEN_COST_WATCH
+    total_cost = total_watches * token_cost_per_watch
+    if not is_admin:
+        balance = auth.get_balance(user.get("id"))
+        if balance <= 0:
+            return jsonify({
+                "error": "Your tokens are used up. Please contact the admin for a recharge.",
+                "code": "tokens_exhausted",
+                "balance": 0,
+            }), 402
+        if balance < total_cost:
+            affordable = balance // token_cost_per_watch if token_cost_per_watch else total_watches
+            return jsonify({
+                "error": f"Not enough tokens. You need {total_cost} tokens for {total_watches} watch(es) but have {balance}. You can afford up to {affordable}.",
+                "code": "tokens_insufficient",
+                "balance": balance,
+                "needed": total_cost,
+            }), 402
+
     created, errors = [], []
     for pin in pincodes:
         for q, thr in product_specs:
             threshold = thr if thr is not None else default_threshold
             for plat in platforms:
+                # Deduct token per watch for non-admins.
+                if not is_admin and token_cost_per_watch > 0:
+                    consumed, _ = auth.consume_tokens(
+                        user["id"], token_cost_per_watch,
+                        reason="watch_create",
+                        meta=f"{plat}/{q}/{pin}")
+                    if consumed < token_cost_per_watch:
+                        errors.append({"product": q, "pincode": pin, "platform": plat,
+                                       "error": "Tokens exhausted"})
+                        continue
                 w, err = watches.add_watch(user, plat, q, pin, notify_to=notify_to,
                                            price_threshold=threshold)
                 if w:
                     created.append(w)
                 elif err:
                     errors.append({"product": q, "pincode": pin, "platform": plat, "error": err})
-    return jsonify({"created": len(created), "watches": created, "errors": errors}), 201
+    balance = None if is_admin else auth.get_balance(user["id"])
+    return jsonify({"created": len(created), "watches": created, "errors": errors, "balance": balance}), 201
 
 
 @app.route("/api/watches/<int:watch_id>", methods=["PATCH"])
@@ -996,6 +1029,31 @@ def api_delete_watch(watch_id):
     if not watches.delete_watch(watch_id, user_id=uid):
         return jsonify({"error": "Watch not found."}), 404
     return jsonify({"ok": True})
+
+
+@app.route("/api/watches/group", methods=["DELETE"])
+@auth.login_required
+def api_delete_watch_group():
+    """Delete all watches for a product+platform group (all pincodes/cities)."""
+    user = auth.current_user()
+    uid = None if user.get("role") == "admin" else user["id"]
+    payload = request.get_json(force=True, silent=True) or {}
+    platform = (payload.get("platform") or "").strip().lower()
+    product = (payload.get("product") or "").strip()
+    if not platform or not product:
+        return jsonify({"error": "platform and product are required."}), 400
+    deleted = watches.delete_watches_by_group(platform, product, user_id=uid)
+    if not deleted:
+        return jsonify({"error": "No matching watches found."}), 404
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.route("/api/admin/watches", methods=["GET"])
+@auth.admin_required
+def admin_list_watches():
+    """Admin: list all watches grouped by user."""
+    grouped = watches.list_watches_grouped_by_user()
+    return jsonify({"users": grouped})
 
 
 @app.route("/api/watches/test-whatsapp", methods=["POST"])

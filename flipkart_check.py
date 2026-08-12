@@ -54,6 +54,7 @@ SCRAPE_JS = r"""
     if (!/\bAdd\b/i.test(t) && !/sold out|out of stock|notify/i.test(t)) return false;
     return nameOf(t).replace(/[^a-zA-Z]/g, '').length >= 5;
   };
+  const bankRe = /bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master/i;
   const all = Array.from(document.querySelectorAll('div,a,li'));
   const cards = all.filter(el => isCard(el.innerText || ''));
   // keep only innermost cards (drop any card that contains another card)
@@ -72,8 +73,21 @@ SCRAPE_JS = r"""
     const name = nameOf(t);
     const key = name.slice(0, 50) + '|' + (vM ? vM[1] : '');
     if (seen.has(key)) continue; seen.add(key);
+    // Look for bank/card offer text in the tile
+    let cardOffer = null;
+    const lines = t.split(/\s{2,}|\n/);
+    for (const line of lines) {
+      if (bankRe.test(line) && /\d/.test(line)) {
+        const savM = line.match(/₹\s?([\d,]+)/);
+        const pctM = line.match(/(\d+)\s*%/);
+        cardOffer = { text: line.trim(),
+          savings: savM ? Number(savM[1].replace(/,/g, '')) : null,
+          percent: pctM ? Number(pctM[1]) : null };
+        break;
+      }
+    }
     items.push({ name, variant: vM ? vM[1] : '', brand: '', price, mrp,
-                 inStock, eta: etaM ? etaM[0] : '' });
+                 inStock, eta: etaM ? etaM[0] : '', cardOffer });
   }
   return items.slice(0, 20);
 }
@@ -251,13 +265,24 @@ def match_row(query, result):
     m = bk.best_match(query, items)
     if not m:
         return {"status": "not_found"}
-    return {
+    row = {
         "status": "available" if m.get("inStock") else "out_of_stock",
         "available": "yes" if m.get("inStock") else "no",
         "name": m.get("name"), "variant": m.get("variant"), "brand": m.get("brand", ""),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
         "eta": m.get("eta") or result.get("eta", ""), "merchant_id": "",
     }
+    co = m.get("cardOffer")
+    if co and isinstance(co, dict) and (co.get("savings") or co.get("text")):
+        from stockly import offers
+        row["best_offer"] = offers.make(
+            savings_text=co.get("text") if not co.get("savings") else f"₹{co['savings']} OFF",
+            final_price=(m.get("price") - co["savings"]) if co.get("savings") and m.get("price") else None,
+            base_price=m.get("price"),
+            detail=co.get("text"),
+            kind="card",
+        )
+    return row
 
 
 if __name__ == "__main__":

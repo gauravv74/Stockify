@@ -29,6 +29,7 @@ import time
 
 from curl_cffi import requests as cffi_requests
 
+import auth
 import blinkit_check as bk
 import config
 import watches
@@ -220,6 +221,23 @@ def _process_watch(watch, session, cache):
     platform = watch["platform"]
     q = watch["product"]
     pin = watch["pincode"]
+    user_id = watch.get("user_id")
+
+    # Token gate: non-admin users must have tokens for the watch to poll.
+    if user_id and config.TOKEN_COST_WATCH_POLL > 0:
+        user = auth.find_user_by_id(user_id)
+        if user and user.get("role") != "admin":
+            balance = auth.get_balance(user_id)
+            if balance <= 0:
+                log.info("watch %s: skipping — user %s has no tokens", wid, user_id)
+                return
+            consumed, _ = auth.consume_tokens(
+                user_id, config.TOKEN_COST_WATCH_POLL,
+                reason="watch_poll",
+                meta=f"{platform}/{q}/{pin}")
+            if consumed < config.TOKEN_COST_WATCH_POLL:
+                log.info("watch %s: skipping — token deduction failed for user %s", wid, user_id)
+                return
 
     # 1) geocode (shared, process-safe cache; persisted per-watch)
     lat, lon, place = watch.get("lat"), watch.get("lon"), watch.get("place")
@@ -297,6 +315,7 @@ def main():
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)
 
+    auth.init_db()
     watches.init_db()
     geo.init_db()
     log.info("worker up | interval=%dm tick=%ds batch=%d notify_on=%s provider=%s configured=%s",

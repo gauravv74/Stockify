@@ -1993,7 +1993,8 @@ body.locked #loginScreen { display: block; }
               <span class="field-hint">Applies to products without an inline <code>@price</code>.</span>
             </div>
 
-            <button type="button" class="btn btn-primary btn-block" id="watchAddBtn" style="margin-top:16px;">Add watch</button>
+            <div class="hint" id="watchTokenHint" style="margin-top:12px;">Each watch costs <strong>1 token</strong> to create, and <strong>1 token</strong> per check cycle. No tokens = watches won't run.</div>
+            <button type="button" class="btn btn-primary btn-block" id="watchAddBtn" style="margin-top:12px;">Add watch</button>
           </div>
         </div>
 
@@ -2017,6 +2018,14 @@ body.locked #loginScreen { display: block; }
               <tbody id="watchesTbody"></tbody>
             </table>
           </div>
+        </div>
+
+        <div class="panel admin-only-wa" id="adminWatchesPanel" style="display:none; margin-top:20px;">
+          <div class="panel-head">
+            <h2>All user watches <span class="count" id="adminWatchCount">0</span></h2>
+            <button type="button" class="link-btn" id="adminWatchRefresh">Refresh</button>
+          </div>
+          <div id="adminWatchesBody" style="max-height:500px; overflow-y:auto;"></div>
         </div>
       </div>
     </div>
@@ -3881,13 +3890,13 @@ function renderWatches(list) {
     const targetTxt = thr.length === 1 ? fmtTarget(thr[0]) : (thr.length ? 'mixed' : '—');
 
     const gid = 'g' + (gi++);
-    html += `<tr class="wgroup" data-gid="${gid}">
+    html += `<tr class="wgroup" data-gid="${gid}" data-platform="${escHtml(g.platform)}" data-product="${escHtml(g.product)}">
       <td><span class="wcaret">▸</span> <span class="uname">${escHtml(g.product)}</span><div class="sub">${total} location${total === 1 ? '' : 's'} · ${activeCount} on</div></td>
       <td>${escHtml(PLAT_LABEL[g.platform] || g.platform)}</td>
       <td>${sumBadge}</td>
       <td class="sub">${targetTxt}</td>
       <td class="sub">${lastChecked}</td>
-      <td></td>
+      <td><button type="button" class="link-btn danger" data-act="del-group" title="Delete all watches for this product">Delete all</button></td>
     </tr>`;
 
     for (const w of items) {
@@ -3932,6 +3941,20 @@ function renderWatches(list) {
       const id = btn.closest('tr').dataset.id;
       try { await apiJson('/api/watches/' + id, { method: 'DELETE' }); await loadWatches(); }
       catch (e) { showWatchesMsg(e.message, false); }
+    });
+  });
+  tb.querySelectorAll('button[data-act="del-group"]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const row = btn.closest('tr');
+      const platform = row.dataset.platform;
+      const product = row.dataset.product;
+      if (!confirm(`Delete ALL watches for "${product}" on ${PLAT_LABEL[platform] || platform}? This removes every pincode/city.`)) return;
+      try {
+        await apiJson('/api/watches/group', { method: 'DELETE', body: JSON.stringify({ platform, product }) });
+        await loadWatches();
+        showWatchesMsg('Watch group deleted.', true);
+      } catch (e) { showWatchesMsg(e.message, false); }
     });
   });
 }
@@ -3981,10 +4004,62 @@ async function loadWatches() {
       $('alertMode').value = mode;
       if (data.interval_min) $('alertInterval').value = data.interval_min;
       loadAdminWaStatus();
+      loadAdminWatches();
     }
   } catch (e) {
     if (e.status === 401) { currentUser = null; applyAuthUI(); closeWatches(); return; }
     showWatchesMsg(e.message, false);
+  }
+}
+
+async function loadAdminWatches() {
+  try {
+    const data = await apiJson('/api/admin/watches');
+    const users = data.users || {};
+    let totalCount = 0;
+    let html = '';
+    for (const [uid, info] of Object.entries(users)) {
+      const wlist = info.watches || [];
+      totalCount += wlist.length;
+      const activeCount = wlist.filter(w => w.active).length;
+      const inStock = wlist.filter(w => w.last_status === 'available').length;
+      html += `<details class="admin-watch-user" style="margin:8px 12px; border-bottom:1px solid var(--border);">
+        <summary style="cursor:pointer; padding:8px 0; font-weight:600;">
+          ${escHtml(info.username)} <span class="count">${wlist.length} watch${wlist.length === 1 ? '' : 'es'} · ${activeCount} active · ${inStock} in stock</span>
+        </summary>
+        <table class="users-table watches-table" style="margin-bottom:12px; font-size:13px;">
+          <thead><tr><th>Product</th><th>Platform</th><th>Pincode</th><th>Status</th><th>Checked</th><th></th></tr></thead>
+          <tbody>`;
+      for (const w of wlist) {
+        const status = w.last_status || '';
+        const badge = status
+          ? `<span class="badge ${badgeClass(status)}">${escHtml(statusLabel(status))}</span>`
+          : '<span class="sub">pending</span>';
+        const checked = w.last_checked_at ? fmtWhen(w.last_checked_at) : '<span class="sub">never</span>';
+        html += `<tr data-id="${w.id}">
+          <td>${escHtml(w.product)}</td>
+          <td>${escHtml(PLAT_LABEL[w.platform] || w.platform)}</td>
+          <td>${escHtml(w.place || w.pincode)}<div class="sub">${escHtml(w.pincode)}</div></td>
+          <td>${badge}</td>
+          <td class="sub">${checked}</td>
+          <td><button type="button" class="link-btn danger" data-act="admin-del-watch" data-wid="${w.id}">Delete</button></td>
+        </tr>`;
+      }
+      html += `</tbody></table></details>`;
+    }
+    $('adminWatchCount').textContent = totalCount;
+    $('adminWatchesBody').innerHTML = html || '<div style="padding:16px;" class="sub">No watches from any user.</div>';
+
+    $('adminWatchesBody').querySelectorAll('button[data-act="admin-del-watch"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const wid = btn.dataset.wid;
+        if (!confirm('Delete this watch?')) return;
+        try { await apiJson('/api/watches/' + wid, { method: 'DELETE' }); await loadAdminWatches(); }
+        catch (e) { showWatchesMsg(e.message, false); }
+      });
+    });
+  } catch (e) {
+    $('adminWatchesBody').innerHTML = `<div style="padding:16px;" class="sub">Failed to load: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -4098,6 +4173,7 @@ async function addWatch() {
     const data = await apiJson('/api/watches', { method: 'POST', body: JSON.stringify(payload) });
     const errs = (data.errors || []).length;
     showWatchesMsg(`Added ${data.created} watch${data.created === 1 ? '' : 'es'}.${errs ? ` ${errs} skipped.` : ''}`, true);
+    if (data.balance !== null && data.balance !== undefined) updateBalance(data.balance);
     $('watchProducts').value = ''; $('watchPins').value = ''; $('watchNotifyTo').value = ''; $('watchThreshold').value = '';
     watchCities.clear(); renderWatchCityCount();
     renderCityChecklist($('watchCityList'), watchCities, $('watchCitySearch').value);
@@ -4139,6 +4215,7 @@ $('watchesBtn').addEventListener('click', openWatches);
 $('watchesClose').addEventListener('click', () => { closeWatches(); setView('search'); });
 $('watchAddBtn').addEventListener('click', addWatch);
 $('watchRefresh').addEventListener('click', loadWatches);
+$('adminWatchRefresh').addEventListener('click', loadAdminWatches);
 $('waTestBtn').addEventListener('click', testWhatsapp);
 $('alertModeSave').addEventListener('click', saveAlertMode);
 $('waRefreshBtn').addEventListener('click', loadAdminWaStatus);

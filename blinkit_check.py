@@ -231,6 +231,8 @@ def parse_products(snippets):
         inventory = d.get("inventory", cart.get("inventory"))
         sold_out = bool(d.get("is_sold_out"))
         available = (not sold_out) and (inventory is None or inventory > 0)
+        # Look for bank/card offer in the product snippet
+        card_offer = _extract_blinkit_card_offer(d)
         products.append({
             "name": _txt(d.get("name")) or cart.get("product_name") or "",
             "variant": _txt(d.get("variant")) or cart.get("unit") or "",
@@ -243,8 +245,43 @@ def parse_products(snippets):
             "eta": _txt((d.get("eta_tag") or {}).get("title")) or d.get("eta_identifier") or "",
             "merchant_id": (d.get("meta") or {}).get("merchant_id"),
             "product_id": (d.get("meta") or {}).get("product_id"),
+            "cardOffer": card_offer,
         })
     return products
+
+
+_BANK_PATTERN = re.compile(
+    r"bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master", re.I)
+
+
+def _extract_blinkit_card_offer(data):
+    """Extract credit card offer from Blinkit product snippet data if present."""
+    for key in ("offers", "bank_offers", "bankOffers", "applicable_offers",
+                "payment_offers", "coupon_text"):
+        val = data.get(key)
+        if not val:
+            continue
+        entries = val if isinstance(val, list) else [val]
+        for entry in entries:
+            if isinstance(entry, str):
+                desc = entry.strip()
+            elif isinstance(entry, dict):
+                desc = ""
+                for field in ("description", "title", "offer_text", "text", "message"):
+                    desc = (entry.get(field) or "").strip()
+                    if desc:
+                        break
+            else:
+                continue
+            if desc and _BANK_PATTERN.search(desc):
+                sav_m = re.search(r"₹\s?([\d,]+)", desc)
+                pct_m = re.search(r"(\d+)\s*%", desc)
+                return {
+                    "text": desc,
+                    "savings": int(sav_m.group(1).replace(",", "")) if sav_m else None,
+                    "percent": int(pct_m.group(1)) if pct_m else None,
+                }
+    return None
 
 
 def _norm(s):

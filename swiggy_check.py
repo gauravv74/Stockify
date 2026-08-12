@@ -20,6 +20,7 @@ Matching reuses blinkit_check.best_match (accessory-aware).
 """
 
 import asyncio
+import re
 import threading
 
 from curl_cffi import requests as cffi_requests
@@ -27,7 +28,7 @@ from playwright.async_api import async_playwright
 
 import blinkit_check as bk
 import config
-from stockly import stores
+from stockly import offers, stores
 
 
 async def _make_lock():
@@ -36,13 +37,15 @@ async def _make_lock():
 
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+      "(KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36")
 
 # curl_cffi TLS/HTTP fingerprint to impersonate for the search request. Swiggy's
 # CloudFront guards /search/v2 with a "JA4-ratelimit-instamart" limiter that 403s
 # the headless browser's distinctive fingerprint; issuing the call via curl_cffi
-# with a mainstream Chrome JA3/JA4 (matching our UA's Chrome 142) sidesteps it.
-IMPERSONATE = "chrome142"
+# with a mainstream Chrome JA3/JA4 sidesteps it. Chrome 119+ fingerprints are
+# currently blocked (HTTP 403 empty body); Chrome 116 is the newest that still
+# returns real catalogue JSON. Keep UA major in sync with IMPERSONATE.
+IMPERSONATE = "chrome116"
 
 STORE_JS = r"""
 async ([lat, lng]) => {
@@ -92,6 +95,26 @@ async ([storeId, q]) => {
     if (o.displayName && Array.isArray(o.variations) && o.variations[0]) {
       const v = o.variations[0];
       const p = v.price || {};
+      // Look for bank/card offers in the product or variation object
+      let cardOffer = null;
+      const offerSources = [o.offers, o.bankOffers, v.offers, v.bankOffers,
+                            o.applicableOffers, v.applicableOffers].filter(Boolean);
+      for (const src of offerSources) {
+        const arr = Array.isArray(src) ? src : [src];
+        for (const of_ of arr) {
+          if (!of_ || typeof of_ !== 'object') continue;
+          const desc = (of_.description || of_.title || of_.offerText || of_.text || '').trim();
+          if (/bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master/i.test(desc)) {
+            const savM = desc.match(/₹\s?([\d,]+)/);
+            const pctM = desc.match(/(\d+)\s*%/);
+            cardOffer = { text: desc,
+              savings: savM ? Number(savM[1].replace(/,/g, '')) : null,
+              percent: pctM ? Number(pctM[1]) : null };
+            break;
+          }
+        }
+        if (cardOffer) break;
+      }
       items.push({
         name: o.displayName,
         brand: o.brand || '',
@@ -100,7 +123,8 @@ async ([storeId, q]) => {
         mrp: (p.mrp && p.mrp.units) ? Number(p.mrp.units) : null,
         price: (p.offerPrice && p.offerPrice.units) ? Number(p.offerPrice.units)
                : ((p.mrp && p.mrp.units) ? Number(p.mrp.units) : null),
-        eta: (v.sla && (v.sla.deliveryTime || v.sla.slaString)) || ''
+        eta: (v.sla && (v.sla.deliveryTime || v.sla.slaString)) || '',
+        cardOffer: cardOffer
       });
     }
     for (const k in o) walk(o[k]);
@@ -142,6 +166,38 @@ def extract_items(j):
     name|variant.
     """
     items, seen = [], set()
+    _BANK_RE = re.compile(
+        r"bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master", re.I)
+
+    def _extract_card_offer(obj, variation):
+        """Look for bank/card offer data in product or variation objects."""
+        sources = []
+        for src_obj in (obj, variation):
+            if not isinstance(src_obj, dict):
+                continue
+            for key in ("offers", "bankOffers", "applicableOffers"):
+                val = src_obj.get(key)
+                if val:
+                    sources.append(val)
+        for src in sources:
+            arr = src if isinstance(src, list) else [src]
+            for entry in arr:
+                if not isinstance(entry, dict):
+                    continue
+                desc = ""
+                for field in ("description", "title", "offerText", "text"):
+                    desc = (entry.get(field) or "").strip()
+                    if desc:
+                        break
+                if desc and _BANK_RE.search(desc):
+                    sav_m = re.search(r"₹\s?([\d,]+)", desc)
+                    pct_m = re.search(r"(\d+)\s*%", desc)
+                    return {
+                        "text": desc,
+                        "savings": int(sav_m.group(1).replace(",", "")) if sav_m else None,
+                        "percent": int(pct_m.group(1)) if pct_m else None,
+                    }
+        return None
 
     def walk(o):
         if isinstance(o, dict):
@@ -153,6 +209,7 @@ def extract_items(j):
                 mrp = _num((p.get("mrp") or {}).get("units"))
                 offer = _num((p.get("offerPrice") or {}).get("units"))
                 sla = v.get("sla") or {}
+                card_offer = _extract_card_offer(o, v)
                 row = {
                     "name": o.get("displayName"),
                     "brand": o.get("brand") or "",
@@ -161,6 +218,7 @@ def extract_items(j):
                     "mrp": mrp,
                     "price": offer if offer is not None else mrp,
                     "eta": sla.get("deliveryTime") or sla.get("slaString") or "",
+                    "cardOffer": card_offer,
                 }
                 key = f"{row['name']}|{row['variant']}"
                 if key not in seen:
@@ -497,13 +555,24 @@ def match_row(query, result):
     m = bk.best_match(query, items)
     if not m:
         return {"status": "not_found", "store": result.get("store")}
-    return {
+    row = {
         "status": "available" if m.get("inStock") else "out_of_stock",
         "available": "yes" if m.get("inStock") else "no",
         "name": m.get("name"), "variant": m.get("variant"), "brand": m.get("brand"),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
         "eta": m.get("eta"), "merchant_id": result.get("store"),
     }
+    # Pass through any credit card offer extracted from the search response.
+    co = m.get("cardOffer")
+    if co and isinstance(co, dict) and (co.get("savings") or co.get("text")):
+        row["best_offer"] = offers.make(
+            savings_text=co.get("text") if not co.get("savings") else f"₹{co['savings']} OFF",
+            final_price=(m.get("price") - co["savings"]) if co.get("savings") and m.get("price") else None,
+            base_price=m.get("price"),
+            detail=co.get("text"),
+            kind="card",
+        )
+    return row
 
 
 if __name__ == "__main__":

@@ -67,8 +67,22 @@ SCRAPE_JS = r"""
     const slug = ((a.getAttribute('href') || '').match(/\/pn\/([^/]+)/) || [])[1] || '';
     if (!name) name = slug.replace(/-/g, ' ');
 
+    // Look for bank/card offer text in the product tile
+    let cardOffer = null;
+    const bankRe = /bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master/i;
+    for (const p of parts) {
+      if (bankRe.test(p) && /\d/.test(p)) {
+        const savM = p.match(/₹\s?([\d,]+)/);
+        const pctM = p.match(/(\d+)\s*%/);
+        cardOffer = { text: p.trim(),
+          savings: savM ? Number(savM[1].replace(/,/g, '')) : null,
+          percent: pctM ? Number(pctM[1]) : null };
+        break;
+      }
+    }
+
     items.push({name: name.replace(/\s+/g, ' ').trim(), variant, brand: '',
-                price, mrp, inStock: hasAdd && !oos});
+                price, mrp, inStock: hasAdd && !oos, cardOffer});
   });
   // de-dupe by name + variant
   const seen = new Set(); const out = [];
@@ -249,13 +263,24 @@ def match_row(query, result):
         if not items and result.get("serviceable") is False:
             return {"status": "not_serviceable"}
         return {"status": "not_found", "store": result.get("store")}
-    return {
+    row = {
         "status": "available" if m.get("inStock") else "out_of_stock",
         "available": "yes" if m.get("inStock") else "no",
         "name": m.get("name"), "variant": m.get("variant"), "brand": m.get("brand", ""),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
         "eta": result.get("eta", ""), "merchant_id": result.get("store"),
     }
+    co = m.get("cardOffer")
+    if co and isinstance(co, dict) and (co.get("savings") or co.get("text")):
+        from stockly import offers
+        row["best_offer"] = offers.make(
+            savings_text=co.get("text") if not co.get("savings") else f"₹{co['savings']} OFF",
+            final_price=(m.get("price") - co["savings"]) if co.get("savings") and m.get("price") else None,
+            base_price=m.get("price"),
+            detail=co.get("text"),
+            kind="card",
+        )
+    return row
 
 
 if __name__ == "__main__":

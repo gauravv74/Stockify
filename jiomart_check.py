@@ -94,8 +94,21 @@ SCRAPE_JS = r"""
     const hasAdd = !!c.querySelector('button');
     const key = name + '|' + variant;
     if (seen.has(key)) continue; seen.add(key);
+    // Look for bank/card offer text in the product card
+    let cardOffer = null;
+    const bankRe = /bank|card|hdfc|icici|sbi|axis|kotak|amex|rupay|visa|master/i;
+    for (const l of lines) {
+      if (bankRe.test(l) && /\d/.test(l)) {
+        const savM = l.match(/₹\s?([\d,]+)/);
+        const pctM = l.match(/(\d+)\s*%/);
+        cardOffer = { text: l.trim(),
+          savings: savM ? Number(savM[1].replace(/,/g, '')) : null,
+          percent: pctM ? Number(pctM[1]) : null };
+        break;
+      }
+    }
     items.push({ name, variant, brand: '', price, mrp,
-                 inStock: hasAdd && !oos, eta: 'Quick Delivery' });
+                 inStock: hasAdd && !oos, eta: 'Quick Delivery', cardOffer });
   }
   return items.slice(0, 30);
 }
@@ -280,13 +293,24 @@ def match_row(query, result):
     m = bk.best_match(query, items)
     if not m:
         return {"status": "not_found"}
-    return {
+    row = {
         "status": "available" if m.get("inStock") else "out_of_stock",
         "available": "yes" if m.get("inStock") else "no",
         "name": m.get("name"), "variant": m.get("variant"), "brand": m.get("brand", ""),
         "price": m.get("price"), "mrp": m.get("mrp"), "inventory": "",
         "eta": m.get("eta") or "", "merchant_id": "",
     }
+    co = m.get("cardOffer")
+    if co and isinstance(co, dict) and (co.get("savings") or co.get("text")):
+        from stockly import offers
+        row["best_offer"] = offers.make(
+            savings_text=co.get("text") if not co.get("savings") else f"₹{co['savings']} OFF",
+            final_price=(m.get("price") - co["savings"]) if co.get("savings") and m.get("price") else None,
+            base_price=m.get("price"),
+            detail=co.get("text"),
+            kind="card",
+        )
+    return row
 
 
 if __name__ == "__main__":

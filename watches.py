@@ -271,6 +271,39 @@ def delete_watch(watch_id, user_id=None):
         return cur.rowcount > 0
 
 
+def delete_watches_by_group(platform, product, user_id=None):
+    """Delete all watches matching a product + platform (optionally scoped to a user).
+    Returns the number of deleted rows."""
+    with _conn() as conn:
+        if user_id is not None:
+            cur = conn.execute(
+                "DELETE FROM watches WHERE platform = ? AND LOWER(product) = LOWER(?) AND user_id IS ?",
+                (platform, product, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "DELETE FROM watches WHERE platform = ? AND LOWER(product) = LOWER(?)",
+                (platform, product),
+            )
+        return cur.rowcount
+
+
+def list_watches_grouped_by_user():
+    """Return all watches grouped by user_id for admin overview."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM watches ORDER BY username, id DESC"
+        ).fetchall()
+    result = {}
+    for r in rows:
+        w = _row_to_watch(r)
+        uid = w.get("user_id") or "unknown"
+        if uid not in result:
+            result[uid] = {"username": w.get("username") or uid, "watches": []}
+        result[uid]["watches"].append(w)
+    return result
+
+
 def due_watches(interval_min, limit):
     """Active watches never checked, or last checked >= interval_min ago.
 

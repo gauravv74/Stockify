@@ -74,12 +74,11 @@ def _blinkit_row(session, product, lat, lon):
     if serviceable is False:
         return {"status": "not_serviceable"}
     if serviceable is None:
-        # Coded so operators can see *why* it failed; still infrastructure.
         return {"status": f"error_{code}", "detail": f"http {code}"}
     match = bk.best_match(product, products)
     if not match:
         return {"status": "not_found"}
-    return {
+    row = {
         "status": "available" if match["available"] else "out_of_stock",
         "available": "yes" if match["available"] else "no",
         "name": match["name"], "variant": match["variant"], "brand": match["brand"],
@@ -87,6 +86,17 @@ def _blinkit_row(session, product, lat, lon):
         "inventory": match["inventory"], "eta": match["eta"],
         "merchant_id": match["merchant_id"],
     }
+    # Pass through any credit card offer extracted from the API response.
+    co = match.get("cardOffer")
+    if co and isinstance(co, dict) and (co.get("savings") or co.get("text")):
+        row["best_offer"] = offers.make(
+            savings_text=co.get("text") if not co.get("savings") else f"₹{co['savings']} OFF",
+            final_price=(match["price"] - co["savings"]) if co.get("savings") and match.get("price") else None,
+            base_price=match.get("price"),
+            detail=co.get("text"),
+            kind="card",
+        )
+    return row
 
 
 def _run_platform_check(platform, product, pincode, lat=None, lon=None, session=None):
