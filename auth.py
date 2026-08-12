@@ -18,7 +18,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import config
 
-ALL_PLATFORMS = ("blinkit", "instamart", "zepto", "bigbasket", "flipkart", "jiomart", "apple", "croma")
+ALL_PLATFORMS = (
+    "blinkit", "instamart", "zepto", "bigbasket",
+    "flipkart", "flipkart_com", "amazon", "jiomart", "apple", "croma",
+)
 DEFAULT_ADMIN_USER = config.DEFAULT_ADMIN_USER
 DEFAULT_ADMIN_PASS = config.DEFAULT_ADMIN_PASS
 

@@ -49,7 +49,8 @@ services:
   # Split by cost profile so a slow browser platform can never starve the cheap
   # HTTP ones. Scale each independently: `docker compose up -d --scale worker-http=3`.
   #
-  # Blinkit, BigBasket. Pure HTTP/TLS-impersonation: cheap, no browser.
+  # Blinkit, BigBasket, Amazon, Flipkart.com. Pure HTTP/TLS-impersonation:
+  # cheap, no browser.
   worker-http:
     build: .
     restart: unless-stopped

@@ -50,7 +50,8 @@ STATUS_LABEL = {
 }
 PLATFORM_LABEL = {
     "instamart": "Swiggy Instamart", "blinkit": "Blinkit", "zepto": "Zepto",
-    "bigbasket": "BigBasket", "flipkart": "Flipkart Minutes", "jiomart": "JioMart",
+    "bigbasket": "BigBasket", "flipkart": "Flipkart Minutes",
+    "flipkart_com": "Flipkart", "amazon": "Amazon", "jiomart": "JioMart",
     "apple": "Apple", "croma": "Croma",
 }
 

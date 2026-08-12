@@ -177,6 +177,8 @@ QUEUE_CONTROL = "control"             # dispatch, finalise, maintenance
 PLATFORM_QUEUE = {
     "blinkit": QUEUE_HTTP,
     "bigbasket": QUEUE_HTTP,
+    "amazon": QUEUE_HTTP,
+    "flipkart_com": QUEUE_HTTP,
     "zepto": QUEUE_BROWSER,
     "flipkart": QUEUE_BROWSER,
     "jiomart": QUEUE_BROWSER,
@@ -204,6 +206,10 @@ PLATFORM_CONCURRENCY = {
     # 2 here x 2 worker-http processes = 4 concurrent BigBasket checks, up from
     # the 1-per-process its old mutex allowed.
     "bigbasket": _conc("bigbasket", 2),
+    # Amazon / Flipkart.com are pure HTTP like Blinkit; keep them below Blinkit's
+    # ceiling — both are more CAPTCHA-prone under burst traffic.
+    "amazon": _conc("amazon", 3),
+    "flipkart_com": _conc("flipkart_com", 3),
     "zepto": _conc("zepto", 2),
     "flipkart": _conc("flipkart", 2),
     "jiomart": _conc("jiomart", 2),

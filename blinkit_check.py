@@ -285,7 +285,13 @@ def _extract_blinkit_card_offer(data):
 
 
 def _norm(s):
-    s = re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
+    s = (s or "").lower()
+    # Keep decimal points inside numbers (e.g. screen size "15.93 cm") so they
+    # stay one token. Stripping the dot used to turn "15.93" into ("15", "93"),
+    # which made "iphone 15" falsely match an iPhone 17 whose title mentioned a
+    # 15.93 cm display.
+    s = re.sub(r"[^a-z0-9. ]", " ", s)
+    s = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", s)
     # Split glued number+unit so a query like "500g" matches a catalogue
     # variant rendered as "500 g" (and "1ltr" == "1 ltr", "128gb" == "128 gb").
     # Without this, best_match's "every query token must appear" rule drops the

@@ -39,11 +39,11 @@ def rows(monkeypatch):
 class TestDiscountReachesEveryPlatform:
     @pytest.mark.parametrize("platform", [
         "blinkit", "instamart", "zepto", "bigbasket",
-        "flipkart", "jiomart", "apple", "croma",
+        "flipkart", "flipkart_com", "amazon", "jiomart", "apple", "croma",
     ])
     def test_any_platform_with_a_price_below_mrp_gets_an_offer(self, rows, platform):
-        """None of the eight scrapers sets best_offer itself except BigBasket,
-        so a per-scraper fix would have left seven platforms blank."""
+        """None of the scrapers sets best_offer itself except BigBasket,
+        so a per-scraper fix would have left the others blank."""
         row = rows({"status": "available", "price": 12099, "mrp": 14999},
                    platform=platform)
         assert row["best_offer"]["savings"] == 2900.0

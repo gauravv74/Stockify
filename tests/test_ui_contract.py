@@ -84,7 +84,7 @@ class TestPlatformCoverage:
     """Every platform the script knows about needs a control in the markup."""
 
     PLATFORMS = ["blinkit", "instamart", "zepto", "bigbasket",
-                 "flipkart", "jiomart", "apple", "croma"]
+                 "flipkart", "flipkart_com", "amazon", "jiomart", "apple", "croma"]
 
     @pytest.mark.parametrize("platform", PLATFORMS)
     def test_platform_has_a_selector_button(self, html, platform):

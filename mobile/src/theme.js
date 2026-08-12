@@ -38,7 +38,10 @@ export const PLATFORM_LABELS = {
   zepto: "Zepto",
   bigbasket: "BigBasket",
   flipkart: "Flipkart Minutes",
+  flipkart_com: "Flipkart",
+  amazon: "Amazon",
   jiomart: "JioMart",
   apple: "Apple",
+  croma: "Croma",
   all: "All",
 };

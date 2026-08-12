@@ -118,6 +118,12 @@ def _run_platform_check(platform, product, pincode, lat=None, lon=None, session=
     if platform == "flipkart":
         import flipkart_check as fk
         return fk.match_row(product, fk.client.check(float(lat), float(lon), product))
+    if platform == "flipkart_com":
+        import flipkart_com_check as fkc
+        return fkc.match_row(product, fkc.client.check(float(lat), float(lon), product, pincode))
+    if platform == "amazon":
+        import amazon_check as az
+        return az.match_row(product, az.client.check(float(lat), float(lon), product, pincode))
     if platform == "jiomart":
         import jiomart_check as jm
         return jm.match_row(product, jm.client.check(float(lat), float(lon), product, pincode))
@@ -184,8 +190,8 @@ def _with_offer(row):
     """Fill in the shelf discount when the platform found no card offer.
 
     Done here rather than in each scraper because MRP and price are already
-    normalised onto the row by this point, so one implementation covers all
-    eight platforms and stays consistent between them. A card offer a scraper
+    normalised onto the row by this point, so one implementation covers every
+    platform and stays consistent between them. A card offer a scraper
     did find is never overwritten.
     """
     if not isinstance(row, dict) or row.get("best_offer"):

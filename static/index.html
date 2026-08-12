@@ -810,7 +810,7 @@ body.running .prod-chip { opacity: .55; cursor: not-allowed; }
 .po-stock.out { color: var(--n-600); background: var(--n-100); }
 
 /* Run action */
-/* The panel runs taller than the viewport once a city list and nine platforms
+/* The panel runs taller than the viewport once a city list and many platforms
    are on screen, which pushed the primary action out of reach. Pin it to the
    bottom of the panel, bleeding to the panel edges so content scrolls under a
    solid bar rather than showing through it. */
@@ -1688,8 +1688,7 @@ body.locked #loginScreen { display: block; }
       <div class="page">
 
         <!-- Platform scope — spans the page because it applies to the whole
-             view, and nine options fit one row here instead of wrapping
-             raggedly inside the narrow query panel. -->
+             view; the picker wraps on narrower widths. -->
         <div class="platform-bar">
           <span class="platform-bar-label">Platform</span>
           <div class="plat-picker platforms" role="tablist" aria-label="Platform">
@@ -1716,6 +1715,14 @@ body.locked #loginScreen { display: block; }
             <button class="plat" data-platform="flipkart" role="tab" aria-selected="false">
               <span class="dot" style="--dot:#2874f0"></span>
               <span class="label-full">Flipkart Minutes</span><span class="label-short">Minutes</span>
+            </button>
+            <button class="plat" data-platform="flipkart_com" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#047bd6"></span>
+              <span class="label-full">Flipkart</span><span class="label-short">Flipkart</span>
+            </button>
+            <button class="plat" data-platform="amazon" role="tab" aria-selected="false">
+              <span class="dot" style="--dot:#ff9900"></span>
+              <span class="label-full">Amazon</span><span class="label-short">Amazon</span>
             </button>
             <button class="plat" data-platform="jiomart" role="tab" aria-selected="false">
               <span class="dot" style="--dot:#e4002b"></span>
@@ -2069,6 +2076,12 @@ body.locked #loginScreen { display: block; }
               <label class="plat-toggle">Flipkart Minutes
                 <span class="switch"><input type="checkbox" data-plat="flipkart" /><span class="slider"></span></span>
               </label>
+              <label class="plat-toggle">Flipkart
+                <span class="switch"><input type="checkbox" data-plat="flipkart_com" /><span class="slider"></span></span>
+              </label>
+              <label class="plat-toggle">Amazon
+                <span class="switch"><input type="checkbox" data-plat="amazon" /><span class="slider"></span></span>
+              </label>
               <label class="plat-toggle">JioMart
                 <span class="switch"><input type="checkbox" data-plat="jiomart" /><span class="slider"></span></span>
               </label>
@@ -2195,17 +2208,23 @@ const PLATFORMS = {
   zepto:     { name: 'Zepto',            short: 'Zepto · Stockly',         logo: 'Z',  color: '#7c3aed' },
   bigbasket: { name: 'BigBasket',        short: 'BigBasket · Stockly',     logo: 'bb', color: '#65a30d' },
   flipkart:  { name: 'Flipkart Minutes', short: 'Minutes · Stockly',       logo: 'FM', color: '#2874f0' },
+  flipkart_com: { name: 'Flipkart',      short: 'Flipkart · Stockly',      logo: 'Fk', color: '#047bd6' },
+  amazon:    { name: 'Amazon',           short: 'Amazon · Stockly',        logo: 'a',  color: '#ff9900' },
   jiomart:   { name: 'JioMart',          short: 'JioMart · Stockly',       logo: 'JM', color: '#e4002b' },
   apple:     { name: 'Apple',            short: 'Apple · Stockly',         logo: '', color: '#555555' },
   croma:     { name: 'Croma',            short: 'Croma · Stockly',         logo: 'C',  color: '#14b8a6' },
 };
 const PLAT_DOT = {
-  blinkit: '#f59e0b', instamart: '#ea580c', zepto: '#7c3aed', bigbasket: '#65a30d', flipkart: '#2874f0', jiomart: '#e4002b', apple: '#555555', croma: '#14b8a6',
+  blinkit: '#f59e0b', instamart: '#ea580c', zepto: '#7c3aed', bigbasket: '#65a30d',
+  flipkart: '#2874f0', flipkart_com: '#047bd6', amazon: '#ff9900',
+  jiomart: '#e4002b', apple: '#555555', croma: '#14b8a6',
 };
 const PLAT_LABEL = {
-  blinkit: 'Blinkit', instamart: 'Instamart', zepto: 'Zepto', bigbasket: 'BigBasket', flipkart: 'Flipkart Minutes', jiomart: 'JioMart', apple: 'Apple', croma: 'Croma',
+  blinkit: 'Blinkit', instamart: 'Instamart', zepto: 'Zepto', bigbasket: 'BigBasket',
+  flipkart: 'Flipkart Minutes', flipkart_com: 'Flipkart', amazon: 'Amazon',
+  jiomart: 'JioMart', apple: 'Apple', croma: 'Croma',
 };
-const ALL_PLAT_KEYS = ['blinkit', 'instamart', 'zepto', 'bigbasket', 'flipkart', 'jiomart', 'apple', 'croma'];
+const ALL_PLAT_KEYS = ['blinkit', 'instamart', 'zepto', 'bigbasket', 'flipkart', 'flipkart_com', 'amazon', 'jiomart', 'apple', 'croma'];
 
 // ── App shell: navigation ───────────────────────────────────────────────────
 // Watches and Users are full pages rather than dialogs, so they get room to

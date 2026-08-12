@@ -489,6 +489,12 @@ def _platform_raw_check(platform, q, lat, lon, pin):
     if platform == "flipkart":
         import flipkart_check as fk
         return fk.client.check(float(lat), float(lon), q)
+    if platform == "flipkart_com":
+        import flipkart_com_check as fkc
+        return fkc.client.check(float(lat), float(lon), q, pin)
+    if platform == "amazon":
+        import amazon_check as az
+        return az.client.check(float(lat), float(lon), q, pin)
     if platform == "jiomart":
         import jiomart_check as jm
         return jm.client.check(float(lat), float(lon), q, pin)
